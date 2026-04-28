@@ -1,0 +1,76 @@
+type VisitorCategory = 
+ variant {
+   Employer;
+   Guest;
+   Soldier;
+   SpecialGuest;
+   TemporaryEmployee;
+ };
+type UserRole = 
+ variant {
+   admin;
+   guest;
+   user;
+ };
+type UserInfo = 
+ record {
+   isActive: bool;
+   "principal": UserId;
+   role: AppRole;
+ };
+type UserId = principal;
+type Timestamp = int;
+type EntryRecord = 
+ record {
+   checkIn: CheckIn;
+   checkOut: opt CheckOut;
+ };
+type EntryId = nat;
+type CheckOut = 
+ record {
+   checkInId: EntryId;
+   checkOutTime: Timestamp;
+ };
+type CheckInInput = 
+ record {
+   category: VisitorCategory;
+   notes: text;
+   visitorName: text;
+ };
+type CheckIn = 
+ record {
+   category: VisitorCategory;
+   checkInTime: Timestamp;
+   id: EntryId;
+   isActive: bool;
+   notes: text;
+   submittedBy: UserId;
+   visitorName: text;
+ };
+type AppRole = 
+ variant {
+   Admin;
+   SuperAdmin;
+   User;
+ };
+service : {
+  _initializeAccessControl: () -> ();
+  assignCallerUserRole: (user: principal, role: UserRole) -> ();
+  assignRole: (target: UserId, role: AppRole) -> ();
+  deactivateUser: (target: UserId) -> ();
+  deleteEntry: (entryId: EntryId) -> ();
+  editEntry: (entryId: EntryId, input: CheckInInput) -> ();
+  getActivityLog: () -> (vec EntryRecord) query;
+  getActivityLogByCategory: (category: VisitorCategory) ->
+   (vec EntryRecord) query;
+  getActivityLogByDateRange: (from: Timestamp, to: Timestamp) ->
+   (vec EntryRecord) query;
+  getCallerUserRole: () -> (UserRole) query;
+  getMyRole: () -> (opt AppRole);
+  isCallerAdmin: () -> (bool) query;
+  listUsers: () -> (vec UserInfo) query;
+  reactivateUser: (target: UserId) -> ();
+  revokeRole: (target: UserId) -> ();
+  submitCheckIn: (input: CheckInInput) -> (EntryId);
+  submitCheckOut: (checkInId: EntryId) -> ();
+}

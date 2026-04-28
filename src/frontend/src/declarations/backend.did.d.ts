@@ -10,40 +10,68 @@ import type { ActorMethod } from '@icp-sdk/core/agent';
 import type { IDL } from '@icp-sdk/core/candid';
 import type { Principal } from '@icp-sdk/core/principal';
 
-export interface Order {
-  'productId' : bigint,
-  'timestamp' : Time,
-  'quantity' : bigint,
-  'totalPrice' : bigint,
+export type AppRole = { 'User' : null } |
+  { 'SuperAdmin' : null } |
+  { 'Admin' : null };
+export interface CheckIn {
+  'id' : EntryId,
+  'submittedBy' : UserId,
+  'checkInTime' : Timestamp,
+  'isActive' : boolean,
+  'visitorName' : string,
+  'notes' : string,
+  'category' : VisitorCategory,
 }
-export interface Product {
-  'sku' : string,
-  'name' : string,
-  'stock' : bigint,
-  'category' : string,
-  'price' : bigint,
+export interface CheckInInput {
+  'visitorName' : string,
+  'notes' : string,
+  'category' : VisitorCategory,
 }
-export type Time = bigint;
-export interface UserProfile { 'name' : string }
+export interface CheckOut { 'checkInId' : EntryId, 'checkOutTime' : Timestamp }
+export type EntryId = bigint;
+export interface EntryRecord {
+  'checkIn' : CheckIn,
+  'checkOut' : [] | [CheckOut],
+}
+export type Timestamp = bigint;
+export type UserId = Principal;
+export interface UserInfo {
+  'principal' : UserId,
+  'role' : AppRole,
+  'isActive' : boolean,
+}
 export type UserRole = { 'admin' : null } |
   { 'user' : null } |
   { 'guest' : null };
+export type VisitorCategory = { 'Guest' : null } |
+  { 'TemporaryEmployee' : null } |
+  { 'Soldier' : null } |
+  { 'Employer' : null } |
+  { 'SpecialGuest' : null };
 export interface _SERVICE {
-  '_initializeAccessControlWithSecret' : ActorMethod<[string], undefined>,
-  'addProduct' : ActorMethod<[string, string, string, bigint, bigint], bigint>,
+  '_initializeAccessControl' : ActorMethod<[], undefined>,
   'assignCallerUserRole' : ActorMethod<[Principal, UserRole], undefined>,
-  'createOrder' : ActorMethod<[bigint, bigint], bigint>,
-  'getAllOrders' : ActorMethod<[], Array<Order>>,
-  'getAllProducts' : ActorMethod<[], Array<Product>>,
-  'getCallerUserProfile' : ActorMethod<[], [] | [UserProfile]>,
+  'assignRole' : ActorMethod<[UserId, AppRole], undefined>,
+  'deactivateUser' : ActorMethod<[UserId], undefined>,
+  'deleteEntry' : ActorMethod<[EntryId], undefined>,
+  'editEntry' : ActorMethod<[EntryId, CheckInInput], undefined>,
+  'getActivityLog' : ActorMethod<[], Array<EntryRecord>>,
+  'getActivityLogByCategory' : ActorMethod<
+    [VisitorCategory],
+    Array<EntryRecord>
+  >,
+  'getActivityLogByDateRange' : ActorMethod<
+    [Timestamp, Timestamp],
+    Array<EntryRecord>
+  >,
   'getCallerUserRole' : ActorMethod<[], UserRole>,
-  'getCategories' : ActorMethod<[], Array<string>>,
-  'getOrder' : ActorMethod<[bigint], Order>,
-  'getProduct' : ActorMethod<[bigint], Product>,
-  'getProductsByCategory' : ActorMethod<[string], Array<Product>>,
-  'getUserProfile' : ActorMethod<[Principal], [] | [UserProfile]>,
+  'getMyRole' : ActorMethod<[], [] | [AppRole]>,
   'isCallerAdmin' : ActorMethod<[], boolean>,
-  'saveCallerUserProfile' : ActorMethod<[UserProfile], undefined>,
+  'listUsers' : ActorMethod<[], Array<UserInfo>>,
+  'reactivateUser' : ActorMethod<[UserId], undefined>,
+  'revokeRole' : ActorMethod<[UserId], undefined>,
+  'submitCheckIn' : ActorMethod<[CheckInInput], EntryId>,
+  'submitCheckOut' : ActorMethod<[EntryId], undefined>,
 }
 export declare const idlService: IDL.ServiceClass;
 export declare const idlInitArgs: IDL.Type[];

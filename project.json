@@ -1,0 +1,22 @@
+{
+  "overview": "Gate Management Inventory System with role-based access control. Tracks visitor check-ins and check-outs across 5 visitor categories (Guest, Employer, Soldier, Temporary Employee, Special Guest). Super Admin manages up to 3 Admins and 4 Users; privileges apply immediately. Full entry/exit log with search and date range filter.",
+  "features": [
+    "Role-based access: Super Admin, Admin, and User roles with immediate privilege assignment",
+    "Visitor check-in/out with 5 categories: Guest, Employer, Soldier, Temporary Employee, Special Guest",
+    "Full activity log visible to all users, filterable by category and date range",
+    "Admin dashboard for managing users and viewing activity summaries",
+    "CSV export of visitor logs",
+    "Protected pages and role-enforced actions via authorization extension"
+  ],
+  "category": "productivity",
+  "tags": [
+    "gate-management",
+    "visitor-management",
+    "rbac",
+    "inventory",
+    "access-control",
+    "check-in",
+    "check-out"
+  ],
+  "last_updated": "2026-04-22T09:01:02.067Z"
+}

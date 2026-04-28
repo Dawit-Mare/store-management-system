@@ -2,16 +2,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
+  ClipboardList,
   LayoutDashboard,
   LogIn,
   LogOut,
-  Package,
-  ShoppingCart,
-  Tag,
-  User,
+  Settings,
+  Shield,
+  Users,
 } from "lucide-react";
 import { useInternetIdentity } from "../hooks/useInternetIdentity";
-import { useCallerRole } from "../hooks/useQueries";
+import { useMyRole } from "../hooks/useQueries";
 
 const navItems = [
   {
@@ -21,58 +21,83 @@ const navItems = [
     ocid: "nav.dashboard.link",
   },
   {
-    to: "/products" as const,
-    label: "Products",
-    icon: Package,
-    ocid: "nav.products.link",
+    to: "/visitors" as const,
+    label: "Visitors",
+    icon: Users,
+    ocid: "nav.visitors.link",
   },
   {
-    to: "/orders" as const,
-    label: "Orders",
-    icon: ShoppingCart,
-    ocid: "nav.orders.link",
+    to: "/log" as const,
+    label: "Activity Log",
+    icon: ClipboardList,
+    ocid: "nav.log.link",
   },
   {
-    to: "/categories" as const,
-    label: "Categories",
-    icon: Tag,
-    ocid: "nav.categories.link",
+    to: "/users" as const,
+    label: "Users",
+    icon: Shield,
+    ocid: "nav.users.link",
   },
 ];
 
-const roleColors: Record<string, string> = {
-  admin: "bg-amber-500/20 text-amber-400 border-amber-500/40",
-  user: "bg-blue-500/20 text-blue-400 border-blue-500/40",
-  guest: "bg-muted text-muted-foreground border-border",
+type RoleKey = "super_admin" | "admin" | "user" | "guest";
+
+const roleConfig: Record<RoleKey, { label: string; className: string }> = {
+  super_admin: {
+    label: "Super Admin",
+    className: "role-badge role-super-admin",
+  },
+  admin: {
+    label: "Admin",
+    className: "role-badge role-admin",
+  },
+  user: {
+    label: "User",
+    className: "role-badge role-user",
+  },
+  guest: {
+    label: "Guest",
+    className: "role-badge role-user",
+  },
 };
 
+function normaliseRole(raw: string | null | undefined): RoleKey {
+  if (!raw) return "guest";
+  const lower = raw.toLowerCase().replace(/\s+/g, "_");
+  if (lower in roleConfig) return lower as RoleKey;
+  return "guest";
+}
+
 export function Sidebar() {
-  const { login, clear, loginStatus, identity } = useInternetIdentity();
-  const { data: role } = useCallerRole();
+  const { login, clear, loginStatus, identity, isAuthenticated } =
+    useInternetIdentity();
+  const { data: rawRole } = useMyRole();
   const routerState = useRouterState();
-  const isLoggedIn = !!identity;
-  const roleStr = role ? String(role) : "guest";
   const currentPath = routerState.location.pathname;
+
+  const roleKey = normaliseRole(rawRole);
+  const role = roleConfig[roleKey];
 
   return (
     <aside className="w-60 shrink-0 bg-sidebar flex flex-col h-screen sticky top-0 border-r border-sidebar-border">
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 py-5 border-b border-sidebar-border">
-        <img
-          src="/assets/generated/store-logo-transparent.dim_64x64.png"
-          alt="Store Logo"
-          className="w-8 h-8 rounded"
-        />
+        <div className="w-8 h-8 rounded bg-primary/20 flex items-center justify-center shrink-0">
+          <Shield className="w-4 h-4 text-primary" />
+        </div>
         <div>
           <div className="font-display font-bold text-sm text-foreground leading-tight">
-            StoreMS
+            GateWatch
           </div>
-          <div className="text-xs text-muted-foreground">Management System</div>
+          <div className="text-xs text-muted-foreground">Gate Management</div>
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5">
+      <nav
+        className="flex-1 px-3 py-4 space-y-0.5"
+        aria-label="Primary navigation"
+      >
         {navItems.map((item) => {
           const isActive =
             item.to === "/"
@@ -90,8 +115,8 @@ export function Sidebar() {
               }`}
             >
               <item.icon
-                className={`w-4 h-4 ${
-                  isActive ? "text-amber-400" : "text-muted-foreground"
+                className={`w-4 h-4 shrink-0 ${
+                  isActive ? "text-primary" : "text-muted-foreground"
                 }`}
               />
               {item.label}
@@ -100,32 +125,38 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Footer */}
+      {/* User section */}
       <div className="px-3 py-4 border-t border-sidebar-border space-y-3">
-        {isLoggedIn && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded bg-accent/30">
-            <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+        {isAuthenticated && identity && (
+          <div className="flex items-start gap-2.5 px-3 py-2.5 rounded bg-sidebar-accent">
+            <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center shrink-0 mt-0.5">
+              <span className="text-xs font-bold text-primary uppercase">
+                {roleKey === "super_admin"
+                  ? "SA"
+                  : roleKey === "admin"
+                    ? "A"
+                    : "U"}
+              </span>
+            </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs text-muted-foreground truncate">
-                {identity.getPrincipal().toString().slice(0, 16)}…
-              </div>
-              <Badge
-                className={`text-xs mt-0.5 border ${
-                  roleColors[roleStr] ?? roleColors.guest
-                }`}
-                variant="outline"
+              <div
+                className="text-xs text-muted-foreground truncate font-mono-nums"
+                title={identity.getPrincipal().toString()}
               >
-                {roleStr}
-              </Badge>
+                {identity.getPrincipal().toString().slice(0, 14)}…
+              </div>
+              <span className={`${role.className} inline-block mt-1`}>
+                {role.label}
+              </span>
             </div>
           </div>
         )}
 
-        {isLoggedIn ? (
+        {isAuthenticated ? (
           <Button
             variant="outline"
             size="sm"
-            className="w-full justify-start gap-2 text-muted-foreground"
+            className="w-full justify-start gap-2 text-muted-foreground border-sidebar-border hover:bg-sidebar-accent"
             onClick={() => clear()}
             data-ocid="auth.logout.button"
           >
@@ -144,6 +175,15 @@ export function Sidebar() {
             {loginStatus === "logging-in" ? "Connecting…" : "Sign In"}
           </Button>
         )}
+
+        <Link
+          to="/users"
+          data-ocid="nav.settings.link"
+          className="sidebar-item flex items-center gap-3 px-3 py-2 rounded text-xs text-muted-foreground transition-all"
+        >
+          <Settings className="w-3.5 h-3.5 shrink-0" />
+          Settings
+        </Link>
       </div>
     </aside>
   );

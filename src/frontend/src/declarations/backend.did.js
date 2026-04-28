@@ -13,46 +13,75 @@ export const UserRole = IDL.Variant({
   'user' : IDL.Null,
   'guest' : IDL.Null,
 });
-export const Time = IDL.Int;
-export const Order = IDL.Record({
-  'productId' : IDL.Nat,
-  'timestamp' : Time,
-  'quantity' : IDL.Nat,
-  'totalPrice' : IDL.Nat,
+export const UserId = IDL.Principal;
+export const AppRole = IDL.Variant({
+  'User' : IDL.Null,
+  'SuperAdmin' : IDL.Null,
+  'Admin' : IDL.Null,
 });
-export const Product = IDL.Record({
-  'sku' : IDL.Text,
-  'name' : IDL.Text,
-  'stock' : IDL.Nat,
-  'category' : IDL.Text,
-  'price' : IDL.Nat,
+export const EntryId = IDL.Nat;
+export const VisitorCategory = IDL.Variant({
+  'Guest' : IDL.Null,
+  'TemporaryEmployee' : IDL.Null,
+  'Soldier' : IDL.Null,
+  'Employer' : IDL.Null,
+  'SpecialGuest' : IDL.Null,
 });
-export const UserProfile = IDL.Record({ 'name' : IDL.Text });
+export const CheckInInput = IDL.Record({
+  'visitorName' : IDL.Text,
+  'notes' : IDL.Text,
+  'category' : VisitorCategory,
+});
+export const Timestamp = IDL.Int;
+export const CheckIn = IDL.Record({
+  'id' : EntryId,
+  'submittedBy' : UserId,
+  'checkInTime' : Timestamp,
+  'isActive' : IDL.Bool,
+  'visitorName' : IDL.Text,
+  'notes' : IDL.Text,
+  'category' : VisitorCategory,
+});
+export const CheckOut = IDL.Record({
+  'checkInId' : EntryId,
+  'checkOutTime' : Timestamp,
+});
+export const EntryRecord = IDL.Record({
+  'checkIn' : CheckIn,
+  'checkOut' : IDL.Opt(CheckOut),
+});
+export const UserInfo = IDL.Record({
+  'principal' : UserId,
+  'role' : AppRole,
+  'isActive' : IDL.Bool,
+});
 
 export const idlService = IDL.Service({
-  '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
-  'addProduct' : IDL.Func(
-      [IDL.Text, IDL.Text, IDL.Text, IDL.Nat, IDL.Nat],
-      [IDL.Nat],
-      [],
-    ),
+  '_initializeAccessControl' : IDL.Func([], [], []),
   'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
-  'createOrder' : IDL.Func([IDL.Nat, IDL.Nat], [IDL.Nat], []),
-  'getAllOrders' : IDL.Func([], [IDL.Vec(Order)], ['query']),
-  'getAllProducts' : IDL.Func([], [IDL.Vec(Product)], ['query']),
-  'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
-  'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
-  'getCategories' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
-  'getOrder' : IDL.Func([IDL.Nat], [Order], ['query']),
-  'getProduct' : IDL.Func([IDL.Nat], [Product], ['query']),
-  'getProductsByCategory' : IDL.Func([IDL.Text], [IDL.Vec(Product)], ['query']),
-  'getUserProfile' : IDL.Func(
-      [IDL.Principal],
-      [IDL.Opt(UserProfile)],
+  'assignRole' : IDL.Func([UserId, AppRole], [], []),
+  'deactivateUser' : IDL.Func([UserId], [], []),
+  'deleteEntry' : IDL.Func([EntryId], [], []),
+  'editEntry' : IDL.Func([EntryId, CheckInInput], [], []),
+  'getActivityLog' : IDL.Func([], [IDL.Vec(EntryRecord)], ['query']),
+  'getActivityLogByCategory' : IDL.Func(
+      [VisitorCategory],
+      [IDL.Vec(EntryRecord)],
       ['query'],
     ),
+  'getActivityLogByDateRange' : IDL.Func(
+      [Timestamp, Timestamp],
+      [IDL.Vec(EntryRecord)],
+      ['query'],
+    ),
+  'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
+  'getMyRole' : IDL.Func([], [IDL.Opt(AppRole)], []),
   'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
-  'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+  'listUsers' : IDL.Func([], [IDL.Vec(UserInfo)], ['query']),
+  'reactivateUser' : IDL.Func([UserId], [], []),
+  'revokeRole' : IDL.Func([UserId], [], []),
+  'submitCheckIn' : IDL.Func([CheckInInput], [EntryId], []),
+  'submitCheckOut' : IDL.Func([EntryId], [], []),
 });
 
 export const idlInitArgs = [];
@@ -63,50 +92,75 @@ export const idlFactory = ({ IDL }) => {
     'user' : IDL.Null,
     'guest' : IDL.Null,
   });
-  const Time = IDL.Int;
-  const Order = IDL.Record({
-    'productId' : IDL.Nat,
-    'timestamp' : Time,
-    'quantity' : IDL.Nat,
-    'totalPrice' : IDL.Nat,
+  const UserId = IDL.Principal;
+  const AppRole = IDL.Variant({
+    'User' : IDL.Null,
+    'SuperAdmin' : IDL.Null,
+    'Admin' : IDL.Null,
   });
-  const Product = IDL.Record({
-    'sku' : IDL.Text,
-    'name' : IDL.Text,
-    'stock' : IDL.Nat,
-    'category' : IDL.Text,
-    'price' : IDL.Nat,
+  const EntryId = IDL.Nat;
+  const VisitorCategory = IDL.Variant({
+    'Guest' : IDL.Null,
+    'TemporaryEmployee' : IDL.Null,
+    'Soldier' : IDL.Null,
+    'Employer' : IDL.Null,
+    'SpecialGuest' : IDL.Null,
   });
-  const UserProfile = IDL.Record({ 'name' : IDL.Text });
+  const CheckInInput = IDL.Record({
+    'visitorName' : IDL.Text,
+    'notes' : IDL.Text,
+    'category' : VisitorCategory,
+  });
+  const Timestamp = IDL.Int;
+  const CheckIn = IDL.Record({
+    'id' : EntryId,
+    'submittedBy' : UserId,
+    'checkInTime' : Timestamp,
+    'isActive' : IDL.Bool,
+    'visitorName' : IDL.Text,
+    'notes' : IDL.Text,
+    'category' : VisitorCategory,
+  });
+  const CheckOut = IDL.Record({
+    'checkInId' : EntryId,
+    'checkOutTime' : Timestamp,
+  });
+  const EntryRecord = IDL.Record({
+    'checkIn' : CheckIn,
+    'checkOut' : IDL.Opt(CheckOut),
+  });
+  const UserInfo = IDL.Record({
+    'principal' : UserId,
+    'role' : AppRole,
+    'isActive' : IDL.Bool,
+  });
   
   return IDL.Service({
-    '_initializeAccessControlWithSecret' : IDL.Func([IDL.Text], [], []),
-    'addProduct' : IDL.Func(
-        [IDL.Text, IDL.Text, IDL.Text, IDL.Nat, IDL.Nat],
-        [IDL.Nat],
-        [],
-      ),
+    '_initializeAccessControl' : IDL.Func([], [], []),
     'assignCallerUserRole' : IDL.Func([IDL.Principal, UserRole], [], []),
-    'createOrder' : IDL.Func([IDL.Nat, IDL.Nat], [IDL.Nat], []),
-    'getAllOrders' : IDL.Func([], [IDL.Vec(Order)], ['query']),
-    'getAllProducts' : IDL.Func([], [IDL.Vec(Product)], ['query']),
-    'getCallerUserProfile' : IDL.Func([], [IDL.Opt(UserProfile)], ['query']),
+    'assignRole' : IDL.Func([UserId, AppRole], [], []),
+    'deactivateUser' : IDL.Func([UserId], [], []),
+    'deleteEntry' : IDL.Func([EntryId], [], []),
+    'editEntry' : IDL.Func([EntryId, CheckInInput], [], []),
+    'getActivityLog' : IDL.Func([], [IDL.Vec(EntryRecord)], ['query']),
+    'getActivityLogByCategory' : IDL.Func(
+        [VisitorCategory],
+        [IDL.Vec(EntryRecord)],
+        ['query'],
+      ),
+    'getActivityLogByDateRange' : IDL.Func(
+        [Timestamp, Timestamp],
+        [IDL.Vec(EntryRecord)],
+        ['query'],
+      ),
     'getCallerUserRole' : IDL.Func([], [UserRole], ['query']),
-    'getCategories' : IDL.Func([], [IDL.Vec(IDL.Text)], ['query']),
-    'getOrder' : IDL.Func([IDL.Nat], [Order], ['query']),
-    'getProduct' : IDL.Func([IDL.Nat], [Product], ['query']),
-    'getProductsByCategory' : IDL.Func(
-        [IDL.Text],
-        [IDL.Vec(Product)],
-        ['query'],
-      ),
-    'getUserProfile' : IDL.Func(
-        [IDL.Principal],
-        [IDL.Opt(UserProfile)],
-        ['query'],
-      ),
+    'getMyRole' : IDL.Func([], [IDL.Opt(AppRole)], []),
     'isCallerAdmin' : IDL.Func([], [IDL.Bool], ['query']),
-    'saveCallerUserProfile' : IDL.Func([UserProfile], [], []),
+    'listUsers' : IDL.Func([], [IDL.Vec(UserInfo)], ['query']),
+    'reactivateUser' : IDL.Func([UserId], [], []),
+    'revokeRole' : IDL.Func([UserId], [], []),
+    'submitCheckIn' : IDL.Func([CheckInInput], [EntryId], []),
+    'submitCheckOut' : IDL.Func([EntryId], [], []),
   });
 };
 

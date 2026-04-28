@@ -16,8 +16,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ["Cabinet Grotesk", "sans-serif"],
-        body: ["Satoshi", "sans-serif"],
+        display: ["General Sans", "sans-serif"],
+        body: ["DM Sans", "sans-serif"],
         mono: ["Geist Mono", "monospace"],
       },
       colors: {

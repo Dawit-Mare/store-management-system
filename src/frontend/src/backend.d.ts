@@ -7,41 +7,68 @@ export interface None {
     __kind__: "None";
 }
 export type Option<T> = Some<T> | None;
-export type Time = bigint;
-export interface Order {
-    productId: bigint;
-    timestamp: Time;
-    quantity: bigint;
-    totalPrice: bigint;
+export type UserId = Principal;
+export type Timestamp = bigint;
+export type EntryId = bigint;
+export interface CheckOut {
+    checkInId: EntryId;
+    checkOutTime: Timestamp;
 }
-export interface UserProfile {
-    name: string;
+export interface CheckIn {
+    id: EntryId;
+    submittedBy: UserId;
+    checkInTime: Timestamp;
+    isActive: boolean;
+    visitorName: string;
+    notes: string;
+    category: VisitorCategory;
 }
-export interface Product {
-    sku: string;
-    name: string;
-    stock: bigint;
-    category: string;
-    price: bigint;
+export interface CheckInInput {
+    visitorName: string;
+    notes: string;
+    category: VisitorCategory;
+}
+export interface EntryRecord {
+    checkIn: CheckIn;
+    checkOut?: CheckOut;
+}
+export interface UserInfo {
+    principal: UserId;
+    role: AppRole;
+    isActive: boolean;
+}
+export enum AppRole {
+    User = "User",
+    SuperAdmin = "SuperAdmin",
+    Admin = "Admin"
 }
 export enum UserRole {
     admin = "admin",
     user = "user",
     guest = "guest"
 }
+export enum VisitorCategory {
+    Guest = "Guest",
+    TemporaryEmployee = "TemporaryEmployee",
+    Soldier = "Soldier",
+    Employer = "Employer",
+    SpecialGuest = "SpecialGuest"
+}
 export interface backendInterface {
-    addProduct(name: string, sku: string, category: string, price: bigint, stock: bigint): Promise<bigint>;
     assignCallerUserRole(user: Principal, role: UserRole): Promise<void>;
-    createOrder(productId: bigint, quantity: bigint): Promise<bigint>;
-    getAllOrders(): Promise<Array<Order>>;
-    getAllProducts(): Promise<Array<Product>>;
-    getCallerUserProfile(): Promise<UserProfile | null>;
+    assignRole(target: UserId, role: AppRole): Promise<void>;
+    deactivateUser(target: UserId): Promise<void>;
+    deleteEntry(entryId: EntryId): Promise<void>;
+    editEntry(entryId: EntryId, input: CheckInInput): Promise<void>;
+    getActivityLog(): Promise<Array<EntryRecord>>;
+    getActivityLogByCategory(category: VisitorCategory): Promise<Array<EntryRecord>>;
+    getActivityLogByDateRange(from: Timestamp, to: Timestamp): Promise<Array<EntryRecord>>;
     getCallerUserRole(): Promise<UserRole>;
-    getCategories(): Promise<Array<string>>;
-    getOrder(id: bigint): Promise<Order>;
-    getProduct(id: bigint): Promise<Product>;
-    getProductsByCategory(category: string): Promise<Array<Product>>;
-    getUserProfile(user: Principal): Promise<UserProfile | null>;
+    getMyRole(): Promise<AppRole | null>;
     isCallerAdmin(): Promise<boolean>;
-    saveCallerUserProfile(profile: UserProfile): Promise<void>;
+    listUsers(): Promise<Array<UserInfo>>;
+    reactivateUser(target: UserId): Promise<void>;
+    revokeRole(target: UserId): Promise<void>;
+    submitCheckIn(input: CheckInInput): Promise<EntryId>;
+    submitCheckOut(checkInId: EntryId): Promise<void>;
 }
