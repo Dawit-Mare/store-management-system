@@ -1,4 +1,4 @@
-// Version: 3.0.0
+// Version: 1.0.0
 type AppRole__323933729 = {#Admin; #SuperAdmin; #User};
 type CheckIn__221483498 =
   {
@@ -12,15 +12,11 @@ type CheckIn__221483498 =
   };
 type CheckOut__124851188 =
   {checkInId : EntryId__144056575; checkOutTime : Timestamp__301639476};
-type Data__159895909<T> = {var count : Nat__490723111; elements : [var ?T]};
 type Data__791452850<K, V> =
   {var count : Nat__490723111; kvs : [var ?(K, V)]};
 type EntryId__144056575 = Nat;
-type Internal__667636161<T> =
-  {children : [var ?Node__92254746<T>]; data : Data__159895909<T>};
 type Internal__8484328<K, V> =
   {children : [var ?Node__46230540<K, V>]; data : Data__791452850<K, V>};
-type Leaf__520550824<T> = {data : Data__159895909<T>};
 type Leaf__809889148<K, V> = {data : Data__791452850<K, V>};
 type Map__158565046<K, V> = Map__297112838<K, V>;
 type Map__297112838<K, V> =
@@ -30,45 +26,12 @@ type Nat__490723111 = Nat__920180692;
 type Nat__920180692 = Nat;
 type Node__46230540<K, V> =
   {#internal : Internal__8484328<K, V>; #leaf : Leaf__809889148<K, V>};
-type Node__92254746<T> =
-  {#internal : Internal__667636161<T>; #leaf : Leaf__520550824<T>};
-type OldOrder__235915581 =
-  {productId : Nat; quantity : Nat; timestamp : Int; totalPrice : Nat};
-type OldProduct__278484740 =
-  {category : Text; name : Text; price : Nat; sku : Text; stock : Nat};
-type OldUserProfile__416069324 = {name : Text};
-type Set__532252804<T> = Set__710576254<T>;
-type Set__710576254<T> =
-  {var root : Node__92254746<T>; var size : Nat__490723111};
 type Timestamp__301639476 = Int;
 type UserId__158757552 = Principal;
 type UserRole__1054455867 = {#admin; #guest; #user};
 type VisitorCategory__322534719 =
   {#Employer; #Guest; #Soldier; #SpecialGuest; #TemporaryEmployee};
-actor ({
-  stable accessControlState :
-    {
-      var adminAssigned : Bool;
-      userRoles : Map__605269027<Principal, UserRole__1054455867>
-    };
-  in categories : Set__532252804<Text>;
-  in var nextOrderId : Nat;
-  in var nextProductId : Nat;
-  in orders : Map__605269027<Nat, OldOrder__235915581>;
-  in products : Map__605269027<Nat, OldProduct__278484740>;
-  in userProfiles : Map__605269027<Principal, OldUserProfile__416069324>;
-  stable userState :
-    {
-      userActive : Map__605269027<UserId__158757552, Bool>;
-      userRoles : Map__605269027<UserId__158757552, AppRole__323933729>
-    };
-  stable visitorState :
-    {
-      checkIns : Map__605269027<EntryId__144056575, CheckIn__221483498>;
-      checkOuts : Map__605269027<EntryId__144056575, CheckOut__124851188>;
-      nextEntryId : {var value : Nat}
-    }
-}, {
+actor {
   stable accessControlState :
     {
       var adminAssigned : Bool;
@@ -85,4 +48,4 @@ actor ({
       checkOuts : Map__605269027<EntryId__144056575, CheckOut__124851188>;
       nextEntryId : {var value : Nat}
     }
-}) ;
+};

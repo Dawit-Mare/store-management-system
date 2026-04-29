@@ -1,7 +1,3 @@
-// Re-export from core-infrastructure — single import point for the whole app
-export {
-  useInternetIdentity,
-  InternetIdentityProvider,
-  type InternetIdentityContext,
-  type Status,
-} from "@caffeineai/core-infrastructure";
+// Re-export from local auth context — replaces IC Internet Identity
+export { useAuth as useInternetIdentity } from "./useAuth";
+export type {} from "./useAuth";

@@ -31,15 +31,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { AlertTriangle, Download, Pencil, Search, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import type { EntryRecord, VisitorCategory } from "../backend.d";
+import { exportToCSV } from "../db";
 import {
   useActivityLog,
   useDeleteEntry,
   useEditEntry,
   useMyRole,
 } from "../hooks/useQueries";
+import type { ActivityEntry, VisitorCategory } from "../types";
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const CATEGORY_LABELS: Record<string, string> = {
   Guest: "Guest",
@@ -67,39 +68,52 @@ const CATEGORY_BADGE_STYLES: Record<string, string> = {
 };
 
 const PAGE_SIZE = 20;
-const ADMIN_ROLES = ["admin", "super_admin"];
+const ADMIN_ROLES = ["Admin", "SuperAdmin"];
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function nsToMs(ns: bigint): number {
-  return Number(ns / 1_000_000n);
-}
-
-function formatTimestamp(ns: bigint | undefined): string {
-  if (!ns) return "—";
-  const d = new Date(nsToMs(ns));
+function formatTimestamp(ms: number | null): string {
+  if (!ms) return "—";
+  const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 }
 
-function formatDuration(checkInNs: bigint, checkOutNs: bigint): string {
-  const diffMs = nsToMs(checkOutNs) - nsToMs(checkInNs);
-  if (diffMs < 0) return "—";
-  const totalSec = Math.floor(diffMs / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
+/** Converts a timestamp (ms) to a datetime-local input string (YYYY-MM-DDTHH:mm) */
+function tsToInputValue(ms: number | null): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** Parses a datetime-local input string to a timestamp (ms), or null if empty/invalid */
+function inputValueToTs(value: string): number | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function calcDuration(
+  checkInTime: number,
+  checkOutTime: number | null,
+): number | null {
+  if (!checkOutTime) return null;
+  const diff = checkOutTime - checkInTime;
+  return diff > 0 ? diff : null;
+}
+
+function formatDuration(
+  checkInTime: number,
+  checkOutTime: number | null,
+): string {
+  const ms = calcDuration(checkInTime, checkOutTime);
+  if (ms === null) return "On Site";
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
-}
-
-function entryCategoryKey(entry: EntryRecord): string {
-  const cat = entry.checkIn.category;
-  return typeof cat === "object" ? (Object.keys(cat)[0] ?? "") : String(cat);
-}
-
-function entryIsActive(entry: EntryRecord): boolean {
-  return entry.checkIn.isActive && !entry.checkOut;
 }
 
 function dateFromInput(value: string): Date | null {
@@ -109,12 +123,12 @@ function dateFromInput(value: string): Date | null {
 }
 
 function entryMatchesDateRange(
-  entry: EntryRecord,
+  entry: ActivityEntry,
   from: Date | null,
   to: Date | null,
 ): boolean {
   if (!from && !to) return true;
-  const ts = new Date(nsToMs(entry.checkIn.checkInTime));
+  const ts = new Date(entry.checkInTime);
   if (from && ts < from) return false;
   if (to) {
     const toEnd = new Date(to);
@@ -124,29 +138,44 @@ function entryMatchesDateRange(
   return true;
 }
 
-// ─── Edit Modal ───────────────────────────────────────────────────────────────
+// ─── Edit Modal ────────────────────────────────────────────────────────────────
 
 interface EditModalProps {
-  entry: EntryRecord;
+  entry: ActivityEntry;
   open: boolean;
   onClose: () => void;
 }
 
 function EditModal({ entry, open, onClose }: EditModalProps) {
   const { mutateAsync: editEntry, isPending } = useEditEntry();
-  const [name, setName] = useState(entry.checkIn.visitorName);
-  const [category, setCategory] = useState(entryCategoryKey(entry));
-  const [notes, setNotes] = useState(entry.checkIn.notes);
+
+  const [name, setName] = useState(entry.visitorName);
+  const [category, setCategory] = useState<VisitorCategory>(entry.category);
+  const [purpose, setPurpose] = useState(entry.purpose);
+  const [notes, setNotes] = useState(entry.notes);
+  const [checkIn, setCheckIn] = useState(tsToInputValue(entry.checkInTime));
+  const [checkOut, setCheckOut] = useState(tsToInputValue(entry.checkOutTime));
 
   const handleSave = async () => {
+    const checkInTs = inputValueToTs(checkIn);
+    if (!checkInTs) {
+      toast.error("Check-in time is required");
+      return;
+    }
+    const checkOutTs = inputValueToTs(checkOut);
+    const duration = calcDuration(checkInTs, checkOutTs);
     try {
       await editEntry({
-        entryId: String(entry.checkIn.id),
+        entryId: entry.id,
         updates: {
           visitorName: name,
-          category: { [category]: null } as unknown as VisitorCategory,
+          category,
+          purpose,
           notes,
-        },
+          checkInTime: checkInTs,
+          checkOutTime: checkOutTs,
+          duration,
+        } as Partial<ActivityEntry>,
       });
       toast.success("Entry updated");
       onClose();
@@ -158,13 +187,15 @@ function EditModal({ entry, open, onClose }: EditModalProps) {
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent
-        className="bg-card border-border max-w-md"
+        className="bg-card border-border max-w-lg"
         data-ocid="log.edit.dialog"
       >
         <DialogHeader>
           <DialogTitle className="font-display">Edit Entry</DialogTitle>
         </DialogHeader>
+
         <div className="space-y-4 py-2">
+          {/* Name */}
           <div className="space-y-1.5">
             <Label htmlFor="edit-name">Visitor Name</Label>
             <Input
@@ -175,9 +206,14 @@ function EditModal({ entry, open, onClose }: EditModalProps) {
               data-ocid="log.edit.name.input"
             />
           </div>
+
+          {/* Category */}
           <div className="space-y-1.5">
             <Label htmlFor="edit-category">Category</Label>
-            <Select value={category} onValueChange={setCategory}>
+            <Select
+              value={category}
+              onValueChange={(v) => setCategory(v as VisitorCategory)}
+            >
               <SelectTrigger
                 id="edit-category"
                 className="bg-input border-border"
@@ -196,6 +232,46 @@ function EditModal({ entry, open, onClose }: EditModalProps) {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Purpose */}
+          <div className="space-y-1.5">
+            <Label htmlFor="edit-purpose">Purpose</Label>
+            <Input
+              id="edit-purpose"
+              value={purpose}
+              onChange={(e) => setPurpose(e.target.value)}
+              className="bg-input border-border"
+              data-ocid="log.edit.purpose.input"
+            />
+          </div>
+
+          {/* Check-in / Check-out times */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-checkin">Check-in Time</Label>
+              <Input
+                id="edit-checkin"
+                type="datetime-local"
+                value={checkIn}
+                onChange={(e) => setCheckIn(e.target.value)}
+                className="bg-input border-border text-sm"
+                data-ocid="log.edit.checkin.input"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-checkout">Check-out Time</Label>
+              <Input
+                id="edit-checkout"
+                type="datetime-local"
+                value={checkOut}
+                onChange={(e) => setCheckOut(e.target.value)}
+                className="bg-input border-border text-sm"
+                data-ocid="log.edit.checkout.input"
+              />
+            </div>
+          </div>
+
+          {/* Notes */}
           <div className="space-y-1.5">
             <Label htmlFor="edit-notes">Notes</Label>
             <Textarea
@@ -208,6 +284,7 @@ function EditModal({ entry, open, onClose }: EditModalProps) {
             />
           </div>
         </div>
+
         <DialogFooter>
           <Button
             variant="ghost"
@@ -229,7 +306,7 @@ function EditModal({ entry, open, onClose }: EditModalProps) {
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export function ActivityLog() {
   const { data: log = [], isLoading } = useActivityLog();
@@ -241,25 +318,27 @@ export function ActivityLog() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [page, setPage] = useState(1);
-  const [editTarget, setEditTarget] = useState<EntryRecord | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<EntryRecord | null>(null);
+  const [editTarget, setEditTarget] = useState<ActivityEntry | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ActivityEntry | null>(null);
 
   const isAdmin = myRole != null && ADMIN_ROLES.includes(String(myRole));
 
   const fromDateObj = dateFromInput(fromDate);
   const toDateObj = dateFromInput(toDate);
 
-  const filtered = (log as EntryRecord[])
+  const entries = log as ActivityEntry[];
+
+  const filtered = entries
     .filter((entry) => {
       const nameMatch =
         !search ||
-        entry.checkIn.visitorName.toLowerCase().includes(search.toLowerCase());
-      const catKey = entryCategoryKey(entry);
-      const catMatch = filterCategory === "all" || catKey === filterCategory;
+        entry.visitorName.toLowerCase().includes(search.toLowerCase());
+      const catMatch =
+        filterCategory === "all" || entry.category === filterCategory;
       const dateMatch = entryMatchesDateRange(entry, fromDateObj, toDateObj);
       return nameMatch && catMatch && dateMatch;
     })
-    .sort((a, b) => Number(b.checkIn.checkInTime - a.checkIn.checkInTime));
+    .sort((a, b) => b.checkInTime - a.checkInTime);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -271,7 +350,7 @@ export function ActivityLog() {
   const handleDelete = async () => {
     if (!deleteTarget) return;
     try {
-      await deleteEntry(String(deleteTarget.checkIn.id));
+      await deleteEntry(deleteTarget.id);
       toast.success("Entry deleted");
     } catch {
       toast.error("Delete failed");
@@ -280,42 +359,8 @@ export function ActivityLog() {
     }
   };
 
-  const exportCSV = () => {
-    const rows = [
-      [
-        "Check-in Time",
-        "Check-out Time",
-        "Visitor Name",
-        "Category",
-        "Duration",
-        "Status",
-        "Submitted By",
-      ],
-      ...filtered.map((e) => {
-        const catKey = entryCategoryKey(e);
-        const isActive = entryIsActive(e);
-        const duration = e.checkOut
-          ? formatDuration(e.checkIn.checkInTime, e.checkOut.checkOutTime)
-          : "—";
-        return [
-          formatTimestamp(e.checkIn.checkInTime),
-          e.checkOut ? formatTimestamp(e.checkOut.checkOutTime) : "—",
-          e.checkIn.visitorName,
-          CATEGORY_LABELS[catKey] ?? catKey,
-          duration,
-          isActive ? "Checked In" : "Checked Out",
-          e.checkIn.submittedBy.toText?.() ?? String(e.checkIn.submittedBy),
-        ].map((v) => `"${String(v).replace(/"/g, '""')}"`);
-      }),
-    ];
-    const csv = rows.map((r) => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `gate-log-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportCSV = () => {
+    exportToCSV(filtered);
   };
 
   return (
@@ -334,7 +379,7 @@ export function ActivityLog() {
           variant="outline"
           size="sm"
           className="gap-2 shrink-0"
-          onClick={exportCSV}
+          onClick={handleExportCSV}
           data-ocid="log.export.button"
         >
           <Download className="w-4 h-4" />
@@ -345,7 +390,6 @@ export function ActivityLog() {
       {/* Filters */}
       <div className="rounded-lg border border-border bg-card p-4 space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Search */}
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
             <Input
@@ -359,7 +403,6 @@ export function ActivityLog() {
               data-ocid="log.search.search_input"
             />
           </div>
-          {/* Category */}
           <Select
             value={filterCategory}
             onValueChange={(v) => {
@@ -449,213 +492,209 @@ export function ActivityLog() {
           </p>
         </div>
       ) : (
-        <>
-          <div className="rounded-lg border border-border overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[900px]">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30">
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Status
+        <div className="rounded-lg border border-border overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[960px]">
+              <thead>
+                <tr className="border-b border-border bg-muted/30">
+                  {[
+                    "Status",
+                    "Visitor Name",
+                    "Category",
+                    "Purpose",
+                    "Check-in",
+                    "Check-out",
+                    "Duration",
+                    "By",
+                    ...(isAdmin ? ["Actions"] : []),
+                  ].map((h) => (
+                    <th
+                      key={h}
+                      className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider"
+                    >
+                      {h}
                     </th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Visitor Name
-                    </th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Category
-                    </th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Check-in Time
-                    </th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Check-out Time
-                    </th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Duration
-                    </th>
-                    <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Submitted By
-                    </th>
-                    <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wider">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageEntries.map((entry, i) => {
-                    const catKey = entryCategoryKey(entry);
-                    const active = entryIsActive(entry);
-                    const duration = entry.checkOut
-                      ? formatDuration(
-                          entry.checkIn.checkInTime,
-                          entry.checkOut.checkOutTime,
-                        )
-                      : "—";
-                    const submittedBy =
-                      entry.checkIn.submittedBy.toText?.() ??
-                      String(entry.checkIn.submittedBy);
-                    const shortPrincipal = `${submittedBy.slice(0, 5)}…${submittedBy.slice(-3)}`;
-                    const rowIdx = (safePage - 1) * PAGE_SIZE + i + 1;
-
-                    return (
-                      <tr
-                        key={String(entry.checkIn.id)}
-                        className={`border-b border-border/40 last:border-0 transition-colors ${
-                          active
-                            ? "bg-accent/5 hover:bg-accent/10"
-                            : "hover:bg-muted/15"
-                        }`}
-                        data-ocid={`log.table.item.${rowIdx}`}
-                      >
-                        {/* Status indicator */}
-                        <td className="px-4 py-3">
-                          {active ? (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-accent/15 text-accent border border-accent/30">
-                              <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse inline-block" />
-                              Checked In
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/40 text-muted-foreground border border-border">
-                              Checked Out
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Visitor name */}
-                        <td className="px-4 py-3 font-medium text-foreground">
-                          <span
-                            className="truncate max-w-[160px] block"
-                            title={entry.checkIn.visitorName}
-                          >
-                            {entry.checkIn.visitorName}
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pageEntries.map((entry, i) => {
+                  const active = !entry.checkOutTime;
+                  const rowIdx = (safePage - 1) * PAGE_SIZE + i + 1;
+                  return (
+                    <tr
+                      key={entry.id}
+                      className={`border-b border-border/40 last:border-0 transition-colors ${
+                        active
+                          ? "bg-accent/5 hover:bg-accent/10"
+                          : "hover:bg-muted/15"
+                      }`}
+                      data-ocid={`log.table.item.${rowIdx}`}
+                    >
+                      {/* Status */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        {active ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-accent/15 text-accent border border-accent/30">
+                            <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse inline-block" />
+                            Checked In
                           </span>
-                          {entry.checkIn.notes && (
-                            <span
-                              className="text-xs text-muted-foreground truncate max-w-[160px] block mt-0.5"
-                              title={entry.checkIn.notes}
-                            >
-                              {entry.checkIn.notes}
-                            </span>
-                          )}
-                        </td>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-muted/40 text-muted-foreground border border-border">
+                            Checked Out
+                          </span>
+                        )}
+                      </td>
 
-                        {/* Category */}
-                        <td className="px-4 py-3">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs border capitalize ${CATEGORY_BADGE_STYLES[catKey] ?? "border-border text-muted-foreground"}`}
-                          >
-                            {CATEGORY_LABELS[catKey] ?? catKey}
-                          </Badge>
-                        </td>
+                      {/* Visitor Name + notes */}
+                      <td className="px-4 py-3 font-medium text-foreground max-w-[180px]">
+                        <span
+                          className="truncate block"
+                          title={entry.visitorName}
+                        >
+                          {entry.visitorName}
+                        </span>
+                        {entry.notes && (
+                          <span className="text-xs text-muted-foreground truncate block mt-0.5">
+                            {entry.notes}
+                          </span>
+                        )}
+                      </td>
 
-                        {/* Check-in time */}
-                        <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground whitespace-nowrap">
-                          {formatTimestamp(entry.checkIn.checkInTime)}
-                        </td>
+                      {/* Category */}
+                      <td className="px-4 py-3">
+                        <Badge
+                          variant="outline"
+                          className={`text-xs border capitalize whitespace-nowrap ${
+                            CATEGORY_BADGE_STYLES[entry.category] ??
+                            "border-border text-muted-foreground"
+                          }`}
+                        >
+                          {CATEGORY_LABELS[entry.category] ?? entry.category}
+                        </Badge>
+                      </td>
 
-                        {/* Check-out time */}
-                        <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground whitespace-nowrap">
-                          {entry.checkOut ? (
-                            formatTimestamp(entry.checkOut.checkOutTime)
-                          ) : (
-                            <span className="text-accent/70 text-xs">
-                              Still on-site
-                            </span>
-                          )}
-                        </td>
+                      {/* Purpose */}
+                      <td className="px-4 py-3 text-xs text-muted-foreground max-w-[140px]">
+                        <span className="truncate block" title={entry.purpose}>
+                          {entry.purpose || "—"}
+                        </span>
+                      </td>
 
-                        {/* Duration */}
-                        <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground">
-                          {duration}
-                        </td>
+                      {/* Check-in */}
+                      <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground whitespace-nowrap">
+                        {formatTimestamp(entry.checkInTime)}
+                      </td>
 
-                        {/* Submitted by */}
-                        <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground">
-                          <span title={submittedBy}>{shortPrincipal}</span>
-                        </td>
+                      {/* Check-out */}
+                      <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground whitespace-nowrap">
+                        {entry.checkOutTime ? (
+                          formatTimestamp(entry.checkOutTime)
+                        ) : (
+                          <span className="text-accent/70 text-xs italic">
+                            Still on-site
+                          </span>
+                        )}
+                      </td>
 
-                        {/* Actions */}
+                      {/* Duration — calculated live */}
+                      <td className="px-4 py-3 font-mono-nums text-xs whitespace-nowrap">
+                        {active ? (
+                          <span className="text-accent/80 font-medium">
+                            On Site
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {formatDuration(
+                              entry.checkInTime,
+                              entry.checkOutTime,
+                            )}
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Checked in by */}
+                      <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground">
+                        {entry.checkedInBy}
+                      </td>
+
+                      {/* Actions (admin only) */}
+                      {isAdmin && (
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
-                            {isAdmin && (
-                              <>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="w-7 h-7 text-muted-foreground hover:text-foreground"
-                                  onClick={() => setEditTarget(entry)}
-                                  aria-label="Edit entry"
-                                  data-ocid={`log.edit_button.${rowIdx}`}
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </Button>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="w-7 h-7 text-muted-foreground hover:text-destructive"
-                                  onClick={() => setDeleteTarget(entry)}
-                                  disabled={deleting}
-                                  aria-label="Delete entry"
-                                  data-ocid={`log.delete_button.${rowIdx}`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              </>
-                            )}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-7 h-7 text-muted-foreground hover:text-foreground"
+                              onClick={() => setEditTarget(entry)}
+                              aria-label="Edit entry"
+                              data-ocid={`log.edit_button.${rowIdx}`}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-7 h-7 text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeleteTarget(entry)}
+                              disabled={deleting}
+                              aria-label="Delete entry"
+                              data-ocid={`log.delete_button.${rowIdx}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
                           </div>
                         </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Footer: count + pagination */}
-            <div className="border-t border-border bg-muted/10 px-4 py-2.5 flex items-center justify-between gap-4 flex-wrap">
-              <span className="text-xs text-muted-foreground">
-                Showing{" "}
-                <span className="text-foreground font-medium">
-                  {(safePage - 1) * PAGE_SIZE + 1}–
-                  {Math.min(safePage * PAGE_SIZE, filtered.length)}
-                </span>{" "}
-                of{" "}
-                <span className="text-foreground font-medium">
-                  {filtered.length}
-                </span>{" "}
-                entries
-              </span>
-              {totalPages > 1 && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={safePage === 1}
-                    data-ocid="log.pagination_prev"
-                  >
-                    Prev
-                  </Button>
-                  <span className="text-xs text-muted-foreground min-w-[60px] text-center">
-                    {safePage} / {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={safePage === totalPages}
-                    data-ocid="log.pagination_next"
-                  >
-                    Next
-                  </Button>
-                </div>
-              )}
-            </div>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-        </>
+
+          {/* Footer: count + pagination */}
+          <div className="border-t border-border bg-muted/10 px-4 py-2.5 flex items-center justify-between gap-4 flex-wrap">
+            <span className="text-xs text-muted-foreground">
+              Showing{" "}
+              <span className="text-foreground font-medium">
+                {(safePage - 1) * PAGE_SIZE + 1}–
+                {Math.min(safePage * PAGE_SIZE, filtered.length)}
+              </span>{" "}
+              of{" "}
+              <span className="text-foreground font-medium">
+                {filtered.length}
+              </span>{" "}
+              entries
+            </span>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  data-ocid="log.pagination_prev"
+                >
+                  Prev
+                </Button>
+                <span className="text-xs text-muted-foreground min-w-[60px] text-center">
+                  {safePage} / {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  data-ocid="log.pagination_next"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Edit modal */}
@@ -679,11 +718,11 @@ export function ActivityLog() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Entry</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to permanently delete the entry for{" "}
+              Are you sure you want to delete the entry for{" "}
               <span className="text-foreground font-medium">
-                {deleteTarget?.checkIn.visitorName}
+                {deleteTarget?.visitorName}
               </span>
-              ? This action cannot be undone.
+              ? The entry will be removed from the log.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

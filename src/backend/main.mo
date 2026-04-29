@@ -4,9 +4,9 @@ import VisitorLib "lib/visitors";
 import UserLib "lib/users";
 import VisitorsMixin "mixins/visitors-api";
 import UsersMixin "mixins/users-api";
-import Migration "migration";
 
-(with migration = Migration.run)
+
+
 actor {
   // Authorization state (built-in auth extension)
   let accessControlState = AccessControl.initState();

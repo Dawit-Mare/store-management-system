@@ -1,10 +1,7 @@
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "@tanstack/react-router";
 import {
   Briefcase,
-  LogIn,
   Shield,
   Star,
   TrendingUp,
@@ -13,199 +10,133 @@ import {
   Users,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useInternetIdentity } from "../hooks/useInternetIdentity";
-import { useActivityLog, useListUsers, useMyRole } from "../hooks/useQueries";
+import type { VisitorRecord } from "../db/database";
+import { useAuth } from "../hooks/useAuth";
+import {
+  useActivityLog,
+  useListUsers,
+  useMyRole,
+  useOnSiteVisitors,
+} from "../hooks/useQueries";
+import type { ActivityEntry, VisitorCategory } from "../types";
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-type Category =
-  | "guest"
-  | "employer"
-  | "soldier"
-  | "temporary_employee"
-  | "special_guest";
+// ─── Config ───────────────────────────────────────────────────────────────────
 
 interface CategoryConfig {
-  key: Category;
+  key: VisitorCategory;
   label: string;
   Icon: React.ElementType;
   iconBg: string;
   iconColor: string;
-  accentColor: string;
 }
-
-// ---------------------------------------------------------------------------
-// Category config
-// ---------------------------------------------------------------------------
 
 const CATEGORIES: CategoryConfig[] = [
   {
-    key: "guest",
+    key: "Guest",
     label: "Guest",
     Icon: User,
     iconBg: "bg-blue-500/15",
     iconColor: "text-blue-400",
-    accentColor: "#60a5fa",
   },
   {
-    key: "employer",
+    key: "Employer",
     label: "Employer",
     Icon: Briefcase,
     iconBg: "bg-cyan-500/15",
     iconColor: "text-cyan-400",
-    accentColor: "#22d3ee",
   },
   {
-    key: "soldier",
+    key: "Soldier",
     label: "Soldier",
     Icon: Shield,
     iconBg: "bg-accent/15",
     iconColor: "text-accent",
-    accentColor: "oklch(0.62 0.14 145)",
   },
   {
-    key: "temporary_employee",
+    key: "TemporaryEmployee",
     label: "Temp Employee",
     Icon: UserCheck,
     iconBg: "bg-primary/15",
     iconColor: "text-primary",
-    accentColor: "oklch(0.72 0.15 65)",
   },
   {
-    key: "special_guest",
+    key: "SpecialGuest",
     label: "Special Guest",
     Icon: Star,
     iconBg: "bg-purple-500/15",
     iconColor: "text-purple-400",
-    accentColor: "#c084fc",
   },
 ];
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+const CAT_PILL: Record<string, string> = {
+  Guest: "bg-blue-500/15 text-blue-300 border border-blue-500/20",
+  Employer: "bg-cyan-500/15 text-cyan-300 border border-cyan-500/20",
+  Soldier: "bg-accent/15 text-accent border border-accent/20",
+  TemporaryEmployee: "bg-primary/15 text-primary border border-primary/20",
+  SpecialGuest: "bg-purple-500/15 text-purple-300 border border-purple-500/20",
+};
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normCat(e: any): string {
-  return String(e.category ?? "")
-    .toLowerCase()
-    .replace(/\s+/g, "_");
-}
+const CATEGORY_LABELS: Record<string, string> = {
+  Guest: "Guest",
+  Employer: "Employer",
+  Soldier: "Soldier",
+  TemporaryEmployee: "Temp Employee",
+  SpecialGuest: "Special Guest",
+};
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function normStatus(e: any): string {
-  return String(e.status ?? "")
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function entryDate(e: any): string {
-  const ts = e.timestamp ? new Date(Number(e.timestamp) / 1_000_000) : null;
-  if (!ts) return "";
-  return `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, "0")}-${String(ts.getDate()).padStart(2, "0")}`;
-}
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function todayStr(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function weekStartStr(): string {
   const now = new Date();
-  const day = now.getDay();
-  const monday = new Date(now);
-  monday.setDate(now.getDate() - ((day + 6) % 7));
-  return `${monday.getFullYear()}-${String(monday.getMonth() + 1).padStart(2, "0")}-${String(monday.getDate()).padStart(2, "0")}`;
+  const mon = new Date(now);
+  mon.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  return `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
 }
 
-function formatTimestamp(raw: unknown): string {
-  const ts = raw ? new Date(Number(raw) / 1_000_000) : null;
-  if (!ts || Number.isNaN(ts.getTime())) return "—";
-  const date = `${ts.getFullYear()}-${String(ts.getMonth() + 1).padStart(2, "0")}-${String(ts.getDate()).padStart(2, "0")}`;
-  const time = `${String(ts.getHours()).padStart(2, "0")}:${String(ts.getMinutes()).padStart(2, "0")}:${String(ts.getSeconds()).padStart(2, "0")}`;
-  return `${date} ${time}`;
+function dateStr(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function countActive(log: any[], cat?: Category): number {
-  return log.filter(
-    (e) => normStatus(e) === "checked_in" && (cat ? normCat(e) === cat : true),
-  ).length;
+function formatTimestamp(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function countToday(log: any[], cat?: Category): number {
+function countOnSiteVisitors(
+  visitors: VisitorRecord[],
+  cat?: VisitorCategory,
+): number {
+  return visitors.filter((v) => v.isOnSite && (cat ? v.category === cat : true))
+    .length;
+}
+
+function countToday(log: ActivityEntry[], cat?: VisitorCategory): number {
   const today = todayStr();
   return log.filter(
-    (e) => entryDate(e) === today && (cat ? normCat(e) === cat : true),
+    (e) =>
+      !e.isDeleted &&
+      dateStr(e.checkInTime) === today &&
+      (cat ? e.category === cat : true),
   ).length;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function countThisWeek(log: any[], cat?: Category): number {
+function countThisWeek(log: ActivityEntry[], cat?: VisitorCategory): number {
   const ws = weekStartStr();
-  return log.filter((e) => {
-    const d = entryDate(e);
-    return d >= ws && (cat ? normCat(e) === cat : true);
-  }).length;
+  return log.filter(
+    (e) =>
+      !e.isDeleted &&
+      dateStr(e.checkInTime) >= ws &&
+      (cat ? e.category === cat : true),
+  ).length;
 }
 
-// ---------------------------------------------------------------------------
-// Status badge
-// ---------------------------------------------------------------------------
-
-const STATUS_CLASSES: Record<string, string> = {
-  checked_in:
-    "bg-accent/15 text-accent border border-accent/30 px-2.5 py-0.5 rounded-full text-xs font-semibold",
-  checked_out:
-    "bg-primary/15 text-primary border border-primary/30 px-2.5 py-0.5 rounded-full text-xs font-semibold",
-};
-
-function statusClass(raw: string): string {
-  const key = raw.toLowerCase().replace(/[\s-]+/g, "_");
-  return STATUS_CLASSES[key] ?? STATUS_CLASSES.checked_out;
-}
-
-function statusLabel(raw: string): string {
-  return raw.replace(/_/g, "-").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-// Category pill
-const CAT_PILL: Record<string, string> = {
-  guest: "bg-blue-500/15 text-blue-300 border border-blue-500/20",
-  employer: "bg-cyan-500/15 text-cyan-300 border border-cyan-500/20",
-  soldier: "bg-accent/15 text-accent border border-accent/20",
-  temporary_employee: "bg-primary/15 text-primary border border-primary/20",
-  special_guest: "bg-purple-500/15 text-purple-300 border border-purple-500/20",
-};
-
-function catClass(raw: string): string {
-  const key = raw.toLowerCase().replace(/\s+/g, "_");
-  return (
-    CAT_PILL[key] ?? "bg-muted/30 text-muted-foreground border border-border/50"
-  );
-}
-
-function catLabel(raw: string): string {
-  const map: Record<string, string> = {
-    guest: "Guest",
-    employer: "Employer",
-    soldier: "Soldier",
-    temporary_employee: "Temp Employee",
-    special_guest: "Special Guest",
-  };
-  const key = raw.toLowerCase().replace(/\s+/g, "_");
-  return (
-    map[key] ?? raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Summary stat card
-// ---------------------------------------------------------------------------
+// ─── SummaryCard ──────────────────────────────────────────────────────────────
 
 interface SummaryCardProps {
   label: string;
@@ -258,21 +189,23 @@ function SummaryCard({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Category stat card
-// ---------------------------------------------------------------------------
+// ─── CategoryCard ─────────────────────────────────────────────────────────────
 
-interface CategoryCardProps {
+function CategoryCard({
+  config,
+  log,
+  onSiteVisitors,
+  loading,
+  index,
+}: {
   config: CategoryConfig;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  log: any[];
+  log: ActivityEntry[];
+  onSiteVisitors: VisitorRecord[];
   loading: boolean;
   index: number;
-}
-
-function CategoryCard({ config, log, loading, index }: CategoryCardProps) {
+}) {
   const { Icon, label, iconBg, iconColor, key } = config;
-  const onSite = countActive(log, key);
+  const onSite = countOnSiteVisitors(onSiteVisitors, key);
   const today = countToday(log, key);
   const week = countThisWeek(log, key);
 
@@ -292,7 +225,6 @@ function CategoryCard({ config, log, loading, index }: CategoryCardProps) {
           {label}
         </h3>
       </div>
-
       {loading ? (
         <div className="space-y-2">
           <Skeleton className="h-3.5 w-full" />
@@ -302,7 +234,7 @@ function CategoryCard({ config, log, loading, index }: CategoryCardProps) {
       ) : (
         <div className="space-y-2 text-xs">
           <div className="flex justify-between text-muted-foreground">
-            <span>Currently On-Site</span>
+            <span>On-Site</span>
             <span
               className={`font-mono-nums font-bold ${onSite > 0 ? "text-accent" : "text-foreground"}`}
             >
@@ -310,7 +242,7 @@ function CategoryCard({ config, log, loading, index }: CategoryCardProps) {
             </span>
           </div>
           <div className="flex justify-between text-muted-foreground">
-            <span>Total Visits Today</span>
+            <span>Today</span>
             <span className="font-mono-nums font-semibold text-foreground">
               {today}
             </span>
@@ -327,9 +259,7 @@ function CategoryCard({ config, log, loading, index }: CategoryCardProps) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Role breakdown row
-// ---------------------------------------------------------------------------
+// ─── RoleBreakdownRow ─────────────────────────────────────────────────────────
 
 function RoleBreakdownRow({
   label,
@@ -354,99 +284,63 @@ function RoleBreakdownRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Activity row
-// ---------------------------------------------------------------------------
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ActivityRow({ entry, index }: { entry: any; index: number }) {
-  return (
-    <tr
-      className="border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors"
-      data-ocid={`dashboard.log.item.${index + 1}`}
-    >
-      <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground whitespace-nowrap">
-        {formatTimestamp(entry.timestamp)}
-      </td>
-      <td className="px-4 py-3 font-medium text-sm min-w-0">
-        <span className="truncate block max-w-[140px]">
-          {String(entry.name ?? "—")}
-        </span>
-      </td>
-      <td className="px-4 py-3 font-mono-nums text-muted-foreground text-xs">
-        {String(entry.idNumber ?? entry.id_number ?? "—")}
-      </td>
-      <td className="px-4 py-3">
-        <span
-          className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${catClass(String(entry.category ?? ""))}`}
-        >
-          {catLabel(String(entry.category ?? "—"))}
-        </span>
-      </td>
-      <td className="px-4 py-3">
-        <span className={statusClass(String(entry.status ?? ""))}>
-          {statusLabel(String(entry.status ?? "—"))}
-        </span>
-      </td>
-      <td className="px-4 py-3 text-muted-foreground text-xs">
-        {String(entry.gatePoint ?? entry.gate_point ?? "—")}
-      </td>
-    </tr>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Main Dashboard
-// ---------------------------------------------------------------------------
+// ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export function Dashboard() {
-  const { isAuthenticated, login, loginStatus } = useInternetIdentity();
+  const { currentUser } = useAuth();
   const { data: rawRole } = useMyRole();
-  const { data: log = [], isLoading: logLoading } = useActivityLog();
-  const { data: users = [], isLoading: usersLoading } = useListUsers();
+  const { data: rawLog = [], isLoading: logLoading } = useActivityLog();
+  const { data: rawOnSite = [], isLoading: onSiteLoading } =
+    useOnSiteVisitors();
+  const { data: rawUsers = [], isLoading: usersLoading } = useListUsers();
 
-  const role = rawRole ? String(rawRole).toLowerCase() : null;
-  const isSuperAdmin = role === "super_admin" || role === "superadmin";
-  const isAdmin = role === "admin";
+  const log = rawLog as ActivityEntry[];
+  const onSiteVisitors = rawOnSite as VisitorRecord[];
+  const role = rawRole as string | null;
+
+  const isSuperAdmin = role === "SuperAdmin";
+  const isAdmin = role === "Admin";
   const isUser = !isSuperAdmin && !isAdmin;
 
-  // Derived stats
-  const totalOnSiteAll = countActive(log);
+  // On-site count from dedicated hook (IndexedDB filtered query)
+  const totalOnSite = onSiteVisitors.length;
+
+  // Today's and weekly check-ins from full activity log
   const totalTodayAll = countToday(log);
   const totalWeekAll = countThisWeek(log);
 
-  // User role breakdown from users list
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const superAdminCount = (users as any[]).filter((u) =>
-    ["super_admin", "superadmin"].includes(String(u.role ?? "").toLowerCase()),
-  ).length;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const adminCount = (users as any[]).filter(
-    (u) => String(u.role ?? "").toLowerCase() === "admin",
-  ).length;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const userCount = (users as any[]).filter(
-    (u) => String(u.role ?? "").toLowerCase() === "user",
-  ).length;
-
-  // Recent entries - super admin/admin see all, user sees own
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sortedLog = [...(log as any[])].sort((a, b) =>
-    Number((b.timestamp ?? 0n) - (a.timestamp ?? 0n)),
+  // User's personal stats: entries they checked in
+  const myUsername = currentUser?.username ?? "";
+  const myLog = log.filter((e) => e.checkedInBy === myUsername);
+  const myOnSiteVisitors = onSiteVisitors.filter(
+    (v) => v.createdBy === myUsername,
   );
-  const recentLog = sortedLog.slice(0, 5);
+  const myOnSite = myOnSiteVisitors.length;
+  const myToday = countToday(myLog);
 
-  // Role badge label + class
-  const roleBadgeLabel = isSuperAdmin
-    ? "Super Admin"
-    : isAdmin
-      ? "Admin"
-      : "User";
+  // Role breakdown (SuperAdmin only)
+  const users = rawUsers as Array<{ role: string }>;
+  const superAdminCount = users.filter((u) => u.role === "SuperAdmin").length;
+  const adminCount = users.filter((u) => u.role === "Admin").length;
+  const userCount = users.filter((u) => u.role === "User").length;
+
+  // Recent activity: last 5 events by most recent check-in time
+  const recentLog = [...log]
+    .sort((a, b) => b.checkInTime - a.checkInTime)
+    .slice(0, 5);
+
   const roleBadgeClass = isSuperAdmin
     ? "role-badge role-super-admin"
     : isAdmin
       ? "role-badge role-admin"
       : "role-badge role-user";
+  const roleBadgeLabel = isSuperAdmin
+    ? "Super Admin"
+    : isAdmin
+      ? "Admin"
+      : "User";
+
+  const isDataLoading = logLoading || onSiteLoading;
 
   return (
     <div className="space-y-8 pb-8" data-ocid="dashboard.page">
@@ -461,41 +355,21 @@ export function Dashboard() {
             Inventory Overview · Real-time gate activity
           </p>
         </div>
-        {rawRole && (
-          <span className={roleBadgeClass} data-ocid="dashboard.role_badge">
-            {roleBadgeLabel}
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {role && (
+            <span className={roleBadgeClass} data-ocid="dashboard.role_badge">
+              {roleBadgeLabel}
+            </span>
+          )}
+          {currentUser && (
+            <span className="text-xs text-muted-foreground hidden sm:block">
+              {currentUser.username}
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Auth prompt */}
-      {!isAuthenticated && (
-        <div
-          className="rounded-xl border border-primary/30 bg-primary/5 p-5 flex items-center justify-between gap-4"
-          data-ocid="dashboard.auth_prompt"
-        >
-          <div>
-            <p className="font-semibold text-sm">
-              Sign in to manage gate entries
-            </p>
-            <p className="text-muted-foreground text-xs mt-0.5">
-              Internet Identity required for check-in / check-out operations
-            </p>
-          </div>
-          <Button
-            size="sm"
-            className="gap-2 bg-primary/90 hover:bg-primary text-primary-foreground shrink-0"
-            onClick={() => login()}
-            disabled={loginStatus === "logging-in"}
-            data-ocid="dashboard.signin.button"
-          >
-            <LogIn className="w-4 h-4" aria-hidden="true" />
-            {loginStatus === "logging-in" ? "Connecting…" : "Sign In"}
-          </Button>
-        </div>
-      )}
-
-      {/* Summary Stats (visible to admin + super admin) */}
+      {/* Admin/SuperAdmin: Summary Stats */}
       {(isSuperAdmin || isAdmin) && (
         <section data-ocid="dashboard.summary_stats.section">
           <h2 className="font-display font-semibold text-xs uppercase tracking-wider text-muted-foreground mb-4">
@@ -504,12 +378,12 @@ export function Dashboard() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <SummaryCard
               label="Currently On-Site"
-              value={totalOnSiteAll}
+              value={totalOnSite}
               sub="Checked in, not yet out"
               Icon={Users}
               accentClass="text-accent"
               bgClass="bg-accent/15"
-              loading={logLoading}
+              loading={isDataLoading}
               ocid="dashboard.stat.active_visitors"
               delay={0}
             />
@@ -536,11 +410,14 @@ export function Dashboard() {
               delay={0.14}
             />
             {isSuperAdmin && (
-              <div
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, delay: 0.21 }}
                 className="stat-card rounded-xl p-5 flex flex-col gap-2"
                 data-ocid="dashboard.stat.role_breakdown"
               >
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">
                   User Roles
                 </p>
                 <RoleBreakdownRow
@@ -561,43 +438,80 @@ export function Dashboard() {
                   roleClass="user"
                   loading={usersLoading}
                 />
-              </div>
+              </motion.div>
             )}
           </div>
         </section>
       )}
 
-      {/* User: personal on-site summary */}
-      {isUser && isAuthenticated && (
-        <div
-          className="rounded-xl border border-border bg-card p-4 flex items-center gap-4"
-          data-ocid="dashboard.user.onsite_card"
+      {/* User role: personal summary */}
+      {isUser && (
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="grid grid-cols-2 gap-4"
+          data-ocid="dashboard.user.personal_stats"
         >
-          <div className="rounded-full bg-accent/15 p-3">
-            <Users className="w-5 h-5 text-accent" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">
-              Currently On-Site
-            </p>
-            {logLoading ? (
+          <div
+            className="stat-card rounded-xl p-5 flex flex-col gap-3"
+            data-ocid="dashboard.user.onsite_card"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                My On-Site Visitors
+              </p>
+              <div className="rounded-lg p-2 bg-accent/15">
+                <Users className="w-4 h-4 text-accent" aria-hidden="true" />
+              </div>
+            </div>
+            {isDataLoading ? (
               <Skeleton
-                className="h-8 w-16 mt-0.5"
+                className="h-9 w-20"
                 data-ocid="dashboard.onsite.loading_state"
               />
             ) : (
-              <p className="font-display font-bold text-3xl font-mono-nums mt-0.5">
-                {totalOnSiteAll}
+              <p className="font-display font-bold text-3xl font-mono-nums leading-none">
+                {myOnSite}
               </p>
             )}
+            <p className="text-xs text-muted-foreground">
+              Checked in by you, still on-site
+            </p>
           </div>
-        </div>
+          <div
+            className="stat-card rounded-xl p-5 flex flex-col gap-3"
+            data-ocid="dashboard.user.today_card"
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                My Check-ins Today
+              </p>
+              <div className="rounded-lg p-2 bg-primary/15">
+                <UserCheck
+                  className="w-4 h-4 text-primary"
+                  aria-hidden="true"
+                />
+              </div>
+            </div>
+            {logLoading ? (
+              <Skeleton className="h-9 w-20" />
+            ) : (
+              <p className="font-display font-bold text-3xl font-mono-nums leading-none">
+                {myToday}
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Your entries for today
+            </p>
+          </div>
+        </motion.div>
       )}
 
-      {/* Visitor Category Cards */}
+      {/* Category Breakdown Cards */}
       <section data-ocid="dashboard.categories.section">
         <h2 className="font-display font-semibold text-xs uppercase tracking-wider text-muted-foreground mb-4">
-          Visitor Check-In/Out Status Cards
+          Visitor Category Breakdown
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
           {CATEGORIES.map((cat, i) => (
@@ -605,14 +519,15 @@ export function Dashboard() {
               key={cat.key}
               config={cat}
               log={log}
-              loading={logLoading}
+              onSiteVisitors={onSiteVisitors}
+              loading={isDataLoading}
               index={i}
             />
           ))}
         </div>
       </section>
 
-      {/* Activity Log preview */}
+      {/* Activity Log Preview */}
       <section data-ocid="dashboard.activity_log.section">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -645,7 +560,7 @@ export function Dashboard() {
             className="rounded-xl border border-dashed border-border py-14 text-center"
             data-ocid="dashboard.log.empty_state"
           >
-            <ClipboardListIcon className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
+            <Users className="w-8 h-8 text-muted-foreground mx-auto mb-3" />
             <p className="text-muted-foreground text-sm font-medium">
               No activity recorded yet
             </p>
@@ -658,33 +573,53 @@ export function Dashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs">
-                    Timestamp
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs">
-                    Name
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs">
-                    ID #
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs">
-                    Category
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs">
-                    Status
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs">
-                    Gate
-                  </th>
+                  {["Time", "Name", "Category", "Status", "By"].map((h) => (
+                    <th
+                      key={h}
+                      className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs"
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {recentLog.map((entry, i) => (
-                  <ActivityRow
-                    key={String(entry.id ?? i)}
-                    entry={entry}
-                    index={i}
-                  />
+                  <tr
+                    key={entry.id}
+                    className="border-b border-border/40 last:border-0 hover:bg-muted/20 transition-colors"
+                    data-ocid={`dashboard.log.item.${i + 1}`}
+                  >
+                    <td className="px-4 py-3 font-mono-nums text-xs text-muted-foreground whitespace-nowrap">
+                      {formatTimestamp(entry.checkInTime)}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-sm min-w-0">
+                      <span className="truncate block max-w-[140px]">
+                        {entry.visitorName}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${CAT_PILL[entry.category] ?? "bg-muted/30 text-muted-foreground"}`}
+                      >
+                        {CATEGORY_LABELS[entry.category] ?? entry.category}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {!entry.checkOutTime ? (
+                        <span className="bg-accent/15 text-accent border border-accent/30 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                          Checked In
+                        </span>
+                      ) : (
+                        <span className="bg-primary/15 text-primary border border-primary/30 px-2.5 py-0.5 rounded-full text-xs font-semibold">
+                          Checked Out
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground text-xs">
+                      {entry.checkedInBy}
+                    </td>
+                  </tr>
                 ))}
               </tbody>
             </table>
@@ -692,28 +627,5 @@ export function Dashboard() {
         )}
       </section>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Icon helpers
-// ---------------------------------------------------------------------------
-
-function ClipboardListIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
-      />
-    </svg>
   );
 }

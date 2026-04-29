@@ -1,6 +1,14 @@
-import { AppRole, type UserInfo } from "@/backend.d";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -9,66 +17,50 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/hooks/useAuth";
 import {
   useAssignRole,
   useDeactivateUser,
   useListUsers,
-  useMyRole,
   useReactivateUser,
   useRevokeRole,
 } from "@/hooks/useQueries";
-import { Lock, ShieldAlert, ShieldCheck, User, Users } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  Lock,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  User,
+  Users,
+} from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { createUser, hashPassword } from "../db";
+import type { AppRole, UserInfo } from "../types";
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
+// ─── Constants ────────────────────────────────────────────────────────────────
 const MAX_ADMINS = 3;
 const MAX_USERS = 4;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function truncatePrincipal(p: { toString(): string } | string): string {
-  const s = typeof p === "string" ? p : p.toString();
-  if (s.length <= 22) return s;
-  return `${s.slice(0, 12)}…${s.slice(-8)}`;
-}
-
-function toAppRole(raw: string | null | undefined): AppRole | null {
-  if (!raw) return null;
-  if (raw === AppRole.SuperAdmin || raw === "SuperAdmin")
-    return AppRole.SuperAdmin;
-  if (raw === AppRole.Admin || raw === "Admin") return AppRole.Admin;
-  if (raw === AppRole.User || raw === "User") return AppRole.User;
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// RoleBadge
-// ---------------------------------------------------------------------------
+// ─── RoleBadge ────────────────────────────────────────────────────────────────
 function RoleBadge({ role }: { role: AppRole }) {
   const cls =
-    role === AppRole.SuperAdmin
+    role === "SuperAdmin"
       ? "role-badge role-super-admin"
-      : role === AppRole.Admin
+      : role === "Admin"
         ? "role-badge role-admin"
         : "role-badge role-user";
   const icon =
-    role === AppRole.SuperAdmin ? (
+    role === "SuperAdmin" ? (
       <ShieldAlert className="w-3 h-3 mr-1 inline" aria-hidden="true" />
-    ) : role === AppRole.Admin ? (
+    ) : role === "Admin" ? (
       <ShieldCheck className="w-3 h-3 mr-1 inline" aria-hidden="true" />
     ) : (
       <User className="w-3 h-3 mr-1 inline" aria-hidden="true" />
     );
   const label =
-    role === AppRole.SuperAdmin
-      ? "Super Admin"
-      : role === AppRole.Admin
-        ? "Admin"
-        : "User";
+    role === "SuperAdmin" ? "Super Admin" : role === "Admin" ? "Admin" : "User";
   return (
     <span className={cls}>
       {icon}
@@ -77,9 +69,7 @@ function RoleBadge({ role }: { role: AppRole }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// StatusBadge
-// ---------------------------------------------------------------------------
+// ─── StatusBadge ──────────────────────────────────────────────────────────────
 function StatusBadge({ isActive }: { isActive: boolean }) {
   return isActive ? (
     <Badge variant="outline" className="border-accent text-accent text-xs">
@@ -95,9 +85,7 @@ function StatusBadge({ isActive }: { isActive: boolean }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// CapacityCounter
-// ---------------------------------------------------------------------------
+// ─── CapacityCounter ──────────────────────────────────────────────────────────
 function CapacityCounter({
   label,
   current,
@@ -138,9 +126,143 @@ function CapacityCounter({
   );
 }
 
-// ---------------------------------------------------------------------------
-// UserRow
-// ---------------------------------------------------------------------------
+// ─── Add User Dialog ──────────────────────────────────────────────────────────
+function AddUserDialog({
+  open,
+  onClose,
+  adminCount,
+  userCount,
+  isSuperAdmin,
+}: {
+  open: boolean;
+  onClose: () => void;
+  adminCount: number;
+  userCount: number;
+  isSuperAdmin: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  // Admins can only create Users; SuperAdmin can choose Admin or User
+  const [role, setRole] = useState<"Admin" | "User">("User");
+  const [isPending, setIsPending] = useState(false);
+
+  const canAddAdmin = adminCount < MAX_ADMINS;
+  const canAddUser = userCount < MAX_USERS;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim() || !password.trim()) {
+      toast.error("Username and password are required");
+      return;
+    }
+    if (role === "Admin" && !canAddAdmin) {
+      toast.error(`Admin limit reached (max ${MAX_ADMINS})`);
+      return;
+    }
+    if (role === "User" && !canAddUser) {
+      toast.error(`User limit reached (max ${MAX_USERS})`);
+      return;
+    }
+    setIsPending(true);
+    try {
+      const hash = await hashPassword(password);
+      await createUser({ username: username.trim(), passwordHash: hash, role });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      toast.success(`${role} account created for ${username}`);
+      setUsername("");
+      setPassword("");
+      setRole("User");
+      onClose();
+    } catch {
+      toast.error("Failed to create user. Username may already exist.");
+    } finally {
+      setIsPending(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent
+        className="bg-card border-border max-w-sm"
+        data-ocid="users.add.dialog"
+      >
+        <DialogHeader>
+          <DialogTitle className="font-display">Add New User</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4 mt-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="new-username">Username</Label>
+            <Input
+              id="new-username"
+              placeholder="e.g. john.doe"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              data-ocid="users.add.username.input"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="new-password">Password</Label>
+            <Input
+              id="new-password"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              data-ocid="users.add.password.input"
+            />
+          </div>
+          {isSuperAdmin && (
+            <div className="space-y-1.5">
+              <Label>Role</Label>
+              <Select
+                value={role}
+                onValueChange={(v) => setRole(v as "Admin" | "User")}
+              >
+                <SelectTrigger data-ocid="users.add.role.select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Admin" disabled={!canAddAdmin}>
+                    Admin{!canAddAdmin ? " (full)" : ""}
+                  </SelectItem>
+                  <SelectItem value="User" disabled={!canAddUser}>
+                    User{!canAddUser ? " (full)" : ""}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {!isSuperAdmin && (
+            <p className="text-xs text-muted-foreground bg-muted/40 rounded-md px-3 py-2">
+              As Admin, you can only create <strong>User</strong> accounts.
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={onClose}
+              data-ocid="users.add.cancel_button"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={isPending || (!isSuperAdmin && !canAddUser)}
+              data-ocid="users.add.submit_button"
+            >
+              {isPending ? "Creating…" : "Create User"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── UserRow ──────────────────────────────────────────────────────────────────
 function UserRow({
   user,
   index,
@@ -160,56 +282,48 @@ function UserRow({
   isAdmin: boolean;
   adminCount: number;
   userCount: number;
-  onAssignRole: (uid: string, role: AppRole) => void;
-  onRevokeRole: (uid: string) => void;
-  onDeactivate: (uid: string) => void;
-  onReactivate: (uid: string) => void;
-  activeOp: string | null;
+  onAssignRole: (uid: number, role: AppRole) => void;
+  onRevokeRole: (uid: number) => void;
+  onDeactivate: (uid: number) => void;
+  onReactivate: (uid: number) => void;
+  activeOp: number | null;
 }) {
-  const uid = user.principal.toString();
-  const isTargetSuperAdmin = user.role === AppRole.SuperAdmin;
-  const busy = activeOp === uid;
-
-  const canAssignAdmin = adminCount < MAX_ADMINS || user.role === AppRole.Admin;
-  const canAssignUser = userCount < MAX_USERS || user.role === AppRole.User;
+  const isTargetSuperAdmin = user.role === "SuperAdmin";
+  const busy = activeOp === user.id;
+  const canAssignAdmin = adminCount < MAX_ADMINS || user.role === "Admin";
+  const canAssignUser = userCount < MAX_USERS || user.role === "User";
 
   return (
     <tr
       className="border-b border-border/50 last:border-0 hover:bg-muted/20 transition-colors"
       data-ocid={`users.item.${index}`}
     >
-      {/* Principal */}
       <td className="px-4 py-3 min-w-0">
-        <span
-          className="font-mono-nums text-xs text-muted-foreground truncate block max-w-[180px]"
-          title={uid}
-        >
-          {truncatePrincipal(uid)}
+        <span className="font-mono-nums text-sm text-foreground font-medium">
+          {user.username}
+        </span>
+        <span className="text-xs text-muted-foreground block mt-0.5">
+          ID #{user.id}
         </span>
       </td>
-
-      {/* Role */}
       <td className="px-4 py-3">
         <RoleBadge role={user.role} />
       </td>
-
-      {/* Status */}
       <td className="px-4 py-3">
         <StatusBadge isActive={user.isActive} />
       </td>
-
-      {/* Actions */}
       <td className="px-4 py-3">
         {isTargetSuperAdmin ? (
-          <span className="text-xs text-muted-foreground italic">—</span>
+          <span className="text-xs text-muted-foreground italic">
+            Protected — cannot be modified
+          </span>
         ) : (
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Super Admin: inline role assignment */}
             {isSuperAdmin && (
               <>
                 <Select
                   value={user.role}
-                  onValueChange={(v) => onAssignRole(uid, v as AppRole)}
+                  onValueChange={(v) => onAssignRole(user.id, v as AppRole)}
                   disabled={busy}
                 >
                   <SelectTrigger
@@ -220,48 +334,39 @@ function UserRow({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem
-                      value={AppRole.Admin}
-                      disabled={!canAssignAdmin}
-                    >
+                    <SelectItem value="Admin" disabled={!canAssignAdmin}>
                       Admin
-                      {!canAssignAdmin && user.role !== AppRole.Admin
+                      {!canAssignAdmin && user.role !== "Admin"
                         ? " (full)"
                         : ""}
                     </SelectItem>
-                    <SelectItem value={AppRole.User} disabled={!canAssignUser}>
+                    <SelectItem value="User" disabled={!canAssignUser}>
                       User
-                      {!canAssignUser && user.role !== AppRole.User
-                        ? " (full)"
-                        : ""}
+                      {!canAssignUser && user.role !== "User" ? " (full)" : ""}
                     </SelectItem>
                   </SelectContent>
                 </Select>
-
-                {user.role === AppRole.Admin && (
+                {user.role === "Admin" && (
                   <Button
                     size="sm"
                     variant="ghost"
                     className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => onRevokeRole(uid)}
+                    onClick={() => onRevokeRole(user.id)}
                     disabled={busy}
                     data-ocid={`users.revoke_button.${index}`}
-                    aria-label="Revoke Admin role"
                   >
                     Revoke
                   </Button>
                 )}
               </>
             )}
-
-            {/* Activate/Deactivate: Super Admin on anyone, Admin on User only */}
-            {(isSuperAdmin || (isAdmin && user.role === AppRole.User)) &&
+            {(isSuperAdmin || (isAdmin && user.role === "User")) &&
               (user.isActive ? (
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
-                  onClick={() => onDeactivate(uid)}
+                  onClick={() => onDeactivate(user.id)}
                   disabled={busy}
                   data-ocid={`users.deactivate_button.${index}`}
                 >
@@ -272,7 +377,7 @@ function UserRow({
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs border-accent text-accent hover:bg-accent/10"
-                  onClick={() => onReactivate(uid)}
+                  onClick={() => onReactivate(user.id)}
                   disabled={busy}
                   data-ocid={`users.reactivate_button.${index}`}
                 >
@@ -286,44 +391,39 @@ function UserRow({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Main Page
-// ---------------------------------------------------------------------------
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export function UsersPage() {
-  const { data: myRoleRaw, isLoading: roleLoading } = useMyRole();
+  const { currentUser, isLoading: authLoading } = useAuth();
   const { data: rawUsers = [], isLoading: usersLoading } = useListUsers();
   const assignRole = useAssignRole();
   const revokeRole = useRevokeRole();
   const deactivateUser = useDeactivateUser();
   const reactivateUser = useReactivateUser();
-  const [activeOp, setActiveOp] = useState<string | null>(null);
+  const [activeOp, setActiveOp] = useState<number | null>(null);
+  const [showAddUser, setShowAddUser] = useState(false);
 
-  const myRole = toAppRole(myRoleRaw as string | null | undefined);
-  const isSuperAdmin = myRole === AppRole.SuperAdmin;
-  const isAdmin = myRole === AppRole.Admin;
+  const myRole = currentUser?.role as AppRole | null;
+  const isSuperAdmin = myRole === "SuperAdmin";
+  const isAdmin = myRole === "Admin";
   const canAccess = isSuperAdmin || isAdmin;
 
-  // Cast to properly-typed list
   const users = rawUsers as UserInfo[];
+  const adminCount = users.filter((u) => u.role === "Admin").length;
+  const userCount = users.filter((u) => u.role === "User").length;
 
-  // Capacity counts (excluding super admin)
-  const adminCount = users.filter((u) => u.role === AppRole.Admin).length;
-  const userCount = users.filter((u) => u.role === AppRole.User).length;
-
-  // ─── Handlers ────────────────────────────────────────────────────────────
-  function handleAssignRole(uid: string, role: AppRole) {
+  function handleAssignRole(uid: number, role: AppRole) {
     setActiveOp(uid);
     assignRole.mutate(
       { userId: uid, role },
       {
-        onSuccess: () => toast.success("Role updated successfully"),
+        onSuccess: () => toast.success("Role updated"),
         onError: () => toast.error("Failed to update role"),
         onSettled: () => setActiveOp(null),
       },
     );
   }
 
-  function handleRevokeRole(uid: string) {
+  function handleRevokeRole(uid: number) {
     setActiveOp(uid);
     revokeRole.mutate(uid, {
       onSuccess: () => toast.success("Admin role revoked"),
@@ -332,7 +432,7 @@ export function UsersPage() {
     });
   }
 
-  function handleDeactivate(uid: string) {
+  function handleDeactivate(uid: number) {
     setActiveOp(uid);
     deactivateUser.mutate(uid, {
       onSuccess: () => toast.success("User deactivated"),
@@ -341,7 +441,7 @@ export function UsersPage() {
     });
   }
 
-  function handleReactivate(uid: string) {
+  function handleReactivate(uid: number) {
     setActiveOp(uid);
     reactivateUser.mutate(uid, {
       onSuccess: () => toast.success("User reactivated"),
@@ -350,8 +450,7 @@ export function UsersPage() {
     });
   }
 
-  // ─── Loading skeleton ─────────────────────────────────────────────────────
-  if (roleLoading) {
+  if (authLoading) {
     return (
       <div className="p-6 space-y-4" data-ocid="users.loading_state">
         <Skeleton className="h-8 w-52" />
@@ -360,7 +459,6 @@ export function UsersPage() {
     );
   }
 
-  // ─── Access restricted ────────────────────────────────────────────────────
   if (!canAccess) {
     return (
       <div
@@ -380,8 +478,7 @@ export function UsersPage() {
               You need{" "}
               <span className="role-badge role-super-admin">Super Admin</span>{" "}
               or <span className="role-badge role-admin">Admin</span> privileges
-              to manage users. Contact your Super Admin to request elevated
-              access.
+              to manage users.
             </p>
           </div>
         </div>
@@ -389,10 +486,9 @@ export function UsersPage() {
     );
   }
 
-  // ─── Main UI ──────────────────────────────────────────────────────────────
   return (
     <div className="space-y-6" data-ocid="users.page">
-      {/* Header + capacity counters */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
@@ -403,13 +499,13 @@ export function UsersPage() {
             <p className="text-muted-foreground text-sm">
               {isSuperAdmin
                 ? "Super Admin — full role and account control"
-                : "Admin — manage user account status"}
+                : "Admin — create User accounts and manage user status"}
             </p>
           </div>
         </div>
 
         <div
-          className="flex items-center gap-2 flex-wrap"
+          className="flex items-center gap-3 flex-wrap"
           data-ocid="users.capacity_panel"
         >
           <CapacityCounter
@@ -424,10 +520,23 @@ export function UsersPage() {
             max={MAX_USERS}
             color="amber"
           />
+          {/* Both SuperAdmin and Admin can add users */}
+          {canAccess && (
+            <Button
+              size="sm"
+              className="gap-2 bg-primary/90 hover:bg-primary text-primary-foreground"
+              onClick={() => setShowAddUser(true)}
+              disabled={!isSuperAdmin && userCount >= MAX_USERS}
+              data-ocid="users.add.open_modal_button"
+            >
+              <Plus className="w-4 h-4" />
+              Add User
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* Table card */}
+      {/* Users Table */}
       <div className="rounded-xl border border-border bg-card overflow-hidden">
         {usersLoading ? (
           <div className="p-6 space-y-3" data-ocid="users.table_loading_state">
@@ -453,24 +562,20 @@ export function UsersPage() {
             <table className="w-full text-sm" data-ocid="users.table">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                    Principal ID
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                    Role
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                    Status
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                    Actions
-                  </th>
+                  {["Username", "Role", "Status", "Actions"].map((h) => (
+                    <th
+                      key={h}
+                      className="text-left px-4 py-2.5 text-muted-foreground font-medium text-xs uppercase tracking-wide"
+                    >
+                      {h}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {users.map((user, i) => (
                   <UserRow
-                    key={user.principal.toString()}
+                    key={user.id}
                     user={user}
                     index={i + 1}
                     isSuperAdmin={isSuperAdmin}
@@ -492,7 +597,7 @@ export function UsersPage() {
               </span>
               {isSuperAdmin && (
                 <span className="italic">
-                  Role changes take effect on the user's next session refresh.
+                  Role changes take effect immediately.
                 </span>
               )}
             </div>
@@ -516,6 +621,14 @@ export function UsersPage() {
           User
         </span>
       </div>
+
+      <AddUserDialog
+        open={showAddUser}
+        onClose={() => setShowAddUser(false)}
+        adminCount={adminCount}
+        userCount={userCount}
+        isSuperAdmin={isSuperAdmin}
+      />
     </div>
   );
 }

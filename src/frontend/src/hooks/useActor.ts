@@ -1,12 +1,7 @@
-import { useActor as _useActor } from "@caffeineai/core-infrastructure";
-import { createActor } from "../backend";
+// Replaces IC canister actor — exports the Dexie db instance
+export { db } from "../db/database";
 
-/**
- * Returns { actor, isFetching } for the gate-management backend canister.
- * Actor is null while the identity / config is still loading.
- */
+// Stub hook for backwards compatibility — not needed with local storage
 export function useActor() {
-  return _useActor((canisterId, uploadFile, downloadFile, options) =>
-    createActor(canisterId, uploadFile, downloadFile, options),
-  );
+  return { actor: null, isFetching: false };
 }

@@ -42,93 +42,111 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { useInternetIdentity } from "../hooks/useInternetIdentity";
+import type { VisitorRecord } from "../db";
+import { useAuth } from "../hooks/useAuth";
 import {
   type CheckInData,
-  useActivityLog,
-  useDeleteEntry,
-  useMyRole,
+  useDeleteVisitor,
+  useOnSiteVisitors,
   useSubmitCheckIn,
   useSubmitCheckOut,
 } from "../hooks/useQueries";
+import type { VisitorCategory } from "../types";
 
-// ---------------------------------------------------------------------------
-// Category config — color-coded badges
-// ---------------------------------------------------------------------------
-type Category = CheckInData["category"];
+// ─── Category config ──────────────────────────────────────────────────────────
 
 const CATEGORY_CONFIG: Record<
-  Category,
+  VisitorCategory,
   { label: string; Icon: React.ElementType; badgeClass: string }
 > = {
-  guest: {
+  Guest: {
     label: "Guest",
     Icon: User,
     badgeClass:
       "border-blue-500/40 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20",
   },
-  employer: {
+  Employer: {
     label: "Employer",
     Icon: Briefcase,
     badgeClass:
       "border-violet-500/40 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20",
   },
-  soldier: {
+  Soldier: {
     label: "Soldier",
     Icon: Shield,
     badgeClass:
       "border-red-500/40 bg-red-500/10 text-red-400 hover:bg-red-500/20",
   },
-  temporary_employee: {
+  TemporaryEmployee: {
     label: "Temporary Employee",
     Icon: UserCheck,
     badgeClass:
       "border-amber-500/40 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20",
   },
-  special_guest: {
+  SpecialGuest: {
     label: "Special Guest",
     Icon: Star,
     badgeClass: "border-accent/40 bg-accent/10 text-accent hover:bg-accent/20",
   },
 };
 
-const CATEGORIES = Object.entries(CATEGORY_CONFIG).map(([value, cfg]) => ({
-  value: value as Category,
-  ...cfg,
-}));
+const CATEGORIES = (
+  Object.entries(CATEGORY_CONFIG) as [
+    VisitorCategory,
+    (typeof CATEGORY_CONFIG)[VisitorCategory],
+  ][]
+).map(([value, cfg]) => ({ value, ...cfg }));
 
-const GATE_POINTS = [
-  "Main Entry",
-  "Entry Gate 1",
-  "Entry Gate 2",
-  "Side Entry",
-  "Emergency Exit",
-];
+// ─── Category Badge ───────────────────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Check-In Form Dialog
-// ---------------------------------------------------------------------------
+function CategoryBadge({ category }: { category: VisitorCategory }) {
+  const cfg = CATEGORY_CONFIG[category];
+  if (!cfg)
+    return (
+      <Badge variant="outline" className="text-xs">
+        {category}
+      </Badge>
+    );
+  return (
+    <Badge variant="outline" className={`text-xs gap-1 ${cfg.badgeClass}`}>
+      <cfg.Icon className="w-3 h-3" aria-hidden="true" />
+      {cfg.label}
+    </Badge>
+  );
+}
+
+// ─── Check-In Form ────────────────────────────────────────────────────────────
+
+type CheckInFormState = Pick<
+  CheckInData,
+  "name" | "category" | "purpose" | "notes"
+>;
+
 function CheckInDialog({
   open,
   onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+}: { open: boolean; onClose: () => void }) {
   const { mutateAsync, isPending } = useSubmitCheckIn();
-  const [form, setForm] = useState<Partial<CheckInData>>({});
+  const [form, setForm] = useState<Partial<CheckInFormState>>({});
 
-  const set = (field: keyof CheckInData, value: string) =>
-    setForm((f) => ({ ...f, [field]: value }));
+  const set = <K extends keyof CheckInFormState>(
+    field: K,
+    value: CheckInFormState[K],
+  ) => setForm((f) => ({ ...f, [field]: value }));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.name || !form.idNumber || !form.category || !form.gatePoint) {
+    if (!form.name?.trim() || !form.category || !form.purpose?.trim()) {
       toast.error("Please fill all required fields");
       return;
     }
     try {
-      await mutateAsync(form as CheckInData);
+      await mutateAsync({
+        name: form.name.trim(),
+        category: form.category,
+        purpose: form.purpose.trim(),
+        notes: form.notes ?? "",
+      } as CheckInData);
       toast.success(`${form.name} checked in successfully`);
       setForm({});
       onClose();
@@ -137,8 +155,13 @@ function CheckInDialog({
     }
   };
 
+  const handleClose = () => {
+    setForm({});
+    onClose();
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
       <DialogContent
         className="bg-card border-border max-w-md"
         data-ocid="checkin.dialog"
@@ -152,67 +175,47 @@ function CheckInDialog({
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 mt-2">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5 col-span-2">
-              <Label htmlFor="ci-name">Full Name *</Label>
-              <Input
-                id="ci-name"
-                placeholder="e.g. Ahmed Hassan"
-                value={form.name ?? ""}
-                onChange={(e) => set("name", e.target.value)}
-                data-ocid="checkin.name.input"
-                autoFocus
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="ci-id">ID Number *</Label>
-              <Input
-                id="ci-id"
-                placeholder="e.g. 1220004"
-                value={form.idNumber ?? ""}
-                onChange={(e) => set("idNumber", e.target.value)}
-                data-ocid="checkin.id_number.input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Category *</Label>
-              <Select
-                value={form.category ?? ""}
-                onValueChange={(v) => set("category", v)}
-              >
-                <SelectTrigger data-ocid="checkin.category.select">
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent>
-                  {CATEGORIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
-                      <span className="flex items-center gap-2">
-                        <c.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-                        {c.label}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ci-name">Full Name *</Label>
+            <Input
+              id="ci-name"
+              placeholder="e.g. Ahmed Hassan"
+              value={form.name ?? ""}
+              onChange={(e) => set("name", e.target.value)}
+              data-ocid="checkin.name.input"
+              autoFocus
+            />
           </div>
           <div className="space-y-1.5">
-            <Label>Gate / Entry Point *</Label>
+            <Label>Category *</Label>
             <Select
-              value={form.gatePoint ?? ""}
-              onValueChange={(v) => set("gatePoint", v)}
+              value={form.category ?? ""}
+              onValueChange={(v) => set("category", v as VisitorCategory)}
             >
-              <SelectTrigger data-ocid="checkin.gate_point.select">
-                <SelectValue placeholder="Select gate" />
+              <SelectTrigger data-ocid="checkin.category.select">
+                <SelectValue placeholder="Select visitor type" />
               </SelectTrigger>
               <SelectContent>
-                {GATE_POINTS.map((g) => (
-                  <SelectItem key={g} value={g}>
-                    {g}
+                {CATEGORIES.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    <span className="flex items-center gap-2">
+                      <c.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                      {c.label}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ci-purpose">Purpose of Visit *</Label>
+            <Input
+              id="ci-purpose"
+              placeholder="e.g. Meeting, Delivery, Maintenance…"
+              value={form.purpose ?? ""}
+              onChange={(e) => set("purpose", e.target.value)}
+              data-ocid="checkin.purpose.input"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ci-notes">
@@ -223,7 +226,7 @@ function CheckInDialog({
             </Label>
             <Textarea
               id="ci-notes"
-              placeholder="Purpose of visit, escort needed, remarks…"
+              placeholder="Escort needed, remarks, additional info…"
               rows={3}
               value={form.notes ?? ""}
               onChange={(e) => set("notes", e.target.value)}
@@ -236,7 +239,7 @@ function CheckInDialog({
               type="button"
               variant="outline"
               className="flex-1"
-              onClick={onClose}
+              onClick={handleClose}
               data-ocid="checkin.cancel_button"
             >
               Cancel
@@ -257,24 +260,19 @@ function CheckInDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Delete Confirm Dialog
-// ---------------------------------------------------------------------------
+// ─── Delete Confirm ───────────────────────────────────────────────────────────
+
 function DeleteConfirmDialog({
-  entryId,
+  visitorId,
   visitorName,
   onClose,
-}: {
-  entryId: string | null;
-  visitorName: string;
-  onClose: () => void;
-}) {
-  const { mutateAsync: deleteEntry, isPending } = useDeleteEntry();
+}: { visitorId: number | null; visitorName: string; onClose: () => void }) {
+  const { mutateAsync: deleteVisitorFn, isPending } = useDeleteVisitor();
 
   const handleConfirm = async () => {
-    if (!entryId) return;
+    if (!visitorId) return;
     try {
-      await deleteEntry(entryId);
+      await deleteVisitorFn(visitorId);
       toast.success(`Entry for ${visitorName} deleted`);
       onClose();
     } catch {
@@ -283,7 +281,7 @@ function DeleteConfirmDialog({
   };
 
   return (
-    <AlertDialog open={!!entryId} onOpenChange={(v) => !v && onClose()}>
+    <AlertDialog open={!!visitorId} onOpenChange={(v) => !v && onClose()}>
       <AlertDialogContent
         className="bg-card border-border"
         data-ocid="checkin.delete.dialog"
@@ -317,69 +315,36 @@ function DeleteConfirmDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Category Badge
-// ---------------------------------------------------------------------------
-function CategoryBadge({ raw }: { raw: string }) {
-  const key = raw.toLowerCase().replace(/\s+/g, "_") as Category;
-  const cfg = CATEGORY_CONFIG[key];
-  if (!cfg) {
-    return (
-      <Badge variant="outline" className="text-xs">
-        {raw}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="outline" className={`text-xs gap-1 ${cfg.badgeClass}`}>
-      <cfg.Icon className="w-3 h-3" aria-hidden="true" />
-      {cfg.label}
-    </Badge>
-  );
-}
+// ─── Main Visitors Page ───────────────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Main Visitors Page
-// ---------------------------------------------------------------------------
 export function Visitors() {
-  const { isAuthenticated } = useInternetIdentity();
-  const { data: role } = useMyRole();
-  const { data: log = [], isLoading } = useActivityLog();
+  const { currentUser, isAuthenticated } = useAuth();
+  const { data: onSiteRaw = [], isLoading } = useOnSiteVisitors();
   const { mutateAsync: checkOut, isPending: checkingOut } = useSubmitCheckOut();
 
   const [showCheckIn, setShowCheckIn] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
-    id: string;
+    id: number;
     name: string;
   } | null>(null);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("all");
 
   const isAdmin =
-    role === "admin" || role === "super_admin" || role === "superAdmin";
-
-  // Filter to only currently active (checked in) entries
-  const onSite = (log as Record<string, unknown>[]).filter(
-    (e) => String(e.status ?? "").toLowerCase() === "checked_in",
-  );
+    currentUser?.role === "Admin" || currentUser?.role === "SuperAdmin";
+  const onSite = onSiteRaw as VisitorRecord[];
 
   const filtered = onSite.filter((e) => {
-    const nameStr = String(e.name ?? "").toLowerCase();
-    const idStr = String(e.idNumber ?? e.id_number ?? "");
     const matchesSearch =
-      !search ||
-      nameStr.includes(search.toLowerCase()) ||
-      idStr.includes(search);
-    const catNorm = String(e.category ?? "")
-      .toLowerCase()
-      .replace(/\s+/g, "_");
-    const matchesCat = filterCategory === "all" || catNorm === filterCategory;
+      !search || e.name.toLowerCase().includes(search.toLowerCase());
+    const matchesCat =
+      filterCategory === "all" || e.category === filterCategory;
     return matchesSearch && matchesCat;
   });
 
-  const handleCheckOut = async (entryId: string, name: string) => {
+  const handleCheckOut = async (visitorId: number, name: string) => {
     try {
-      await checkOut(entryId);
+      await checkOut(visitorId);
       toast.success(`${name} checked out successfully`);
     } catch {
       toast.error("Check-out failed. Please try again.");
@@ -423,12 +388,7 @@ export function Visitors() {
       {/* Category summary strips */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         {CATEGORIES.map((cat) => {
-          const count = onSite.filter(
-            (e) =>
-              String(e.category ?? "")
-                .toLowerCase()
-                .replace(/\s+/g, "_") === cat.value,
-          ).length;
+          const count = onSite.filter((e) => e.category === cat.value).length;
           return (
             <button
               key={cat.value}
@@ -468,7 +428,7 @@ export function Visitors() {
             aria-hidden="true"
           />
           <Input
-            placeholder="Search by name or ID…"
+            placeholder="Search by name…"
             className="pl-9"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -514,7 +474,7 @@ export function Visitors() {
           <p className="font-semibold text-sm">No visitors on-site</p>
           <p className="text-muted-foreground text-xs mt-1 max-w-xs mx-auto">
             {search || filterCategory !== "all"
-              ? "No results match your filters. Try clearing the search or changing the category."
+              ? "No results match your filters."
               : "Check in the first visitor to get started."}
           </p>
           {isAuthenticated && !search && filterCategory === "all" && (
@@ -534,112 +494,86 @@ export function Visitors() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/20">
-                <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                  Visitor
-                </th>
-                <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide hidden sm:table-cell">
-                  ID #
-                </th>
-                <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                  Category
-                </th>
-                <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide hidden md:table-cell">
-                  Gate
-                </th>
-                <th className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide hidden lg:table-cell">
-                  Notes
-                </th>
-                <th className="text-right px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide">
-                  Actions
-                </th>
+                {["Visitor", "Category", "Purpose", "Notes", "Actions"].map(
+                  (h) => (
+                    <th
+                      key={h}
+                      className="text-left px-4 py-3 text-muted-foreground font-medium text-xs uppercase tracking-wide"
+                    >
+                      {h}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((entry, i) => {
-                const entryId = String(entry.id ?? "");
-                const name = String(entry.name ?? "—");
-                const idNumber = String(
-                  entry.idNumber ?? entry.id_number ?? "—",
-                );
-                const category = String(entry.category ?? "");
-                const gatePoint = String(
-                  entry.gatePoint ?? entry.gate_point ?? "—",
-                );
-                const notes = String(entry.notes ?? "");
-
-                return (
-                  <tr
-                    key={entryId || i}
-                    className="border-b border-border/40 last:border-0 hover:bg-muted/15 transition-colors"
-                    data-ocid={`visitors.list.item.${i + 1}`}
-                  >
-                    <td className="px-4 py-3">
-                      <div className="font-medium leading-tight">{name}</div>
-                      <div className="text-xs text-muted-foreground sm:hidden mt-0.5 font-mono-nums">
-                        {idNumber}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono-nums text-muted-foreground hidden sm:table-cell">
-                      {idNumber}
-                    </td>
-                    <td className="px-4 py-3">
-                      <CategoryBadge raw={category} />
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">
-                      {gatePoint}
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground text-xs max-w-xs hidden lg:table-cell">
-                      <span className="line-clamp-1">{notes || "—"}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {isAuthenticated && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="gap-1.5 text-xs border-border hover:border-accent hover:text-accent transition-colors"
-                            onClick={() => handleCheckOut(entryId, name)}
-                            disabled={checkingOut}
-                            data-ocid={`visitors.checkout.button.${i + 1}`}
-                          >
-                            <LogOut
-                              className="w-3.5 h-3.5"
-                              aria-hidden="true"
-                            />
-                            Check Out
-                          </Button>
-                        )}
-                        {isAdmin && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="w-8 h-8 p-0 hover:bg-destructive/10 hover:text-destructive transition-colors"
-                            onClick={() =>
-                              setDeleteTarget({ id: entryId, name })
-                            }
-                            aria-label={`Delete entry for ${name}`}
-                            data-ocid={`visitors.delete.button.${i + 1}`}
-                          >
-                            <Trash2
-                              className="w-3.5 h-3.5"
-                              aria-hidden="true"
-                            />
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              {filtered.map((entry, i) => (
+                <tr
+                  key={entry.id}
+                  className="border-b border-border/40 last:border-0 hover:bg-muted/15 transition-colors"
+                  data-ocid={`visitors.list.item.${i + 1}`}
+                >
+                  <td className="px-4 py-3">
+                    <div className="font-medium leading-tight">
+                      {entry.name}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {entry.createdBy}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <CategoryBadge category={entry.category} />
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">
+                    {entry.purpose || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs max-w-xs">
+                    <span className="line-clamp-1">{entry.notes || "—"}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {isAuthenticated && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="gap-1.5 text-xs border-border hover:border-accent hover:text-accent transition-colors"
+                          onClick={() => handleCheckOut(entry.id!, entry.name)}
+                          disabled={checkingOut}
+                          data-ocid={`visitors.checkout.button.${i + 1}`}
+                        >
+                          <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
+                          Check Out
+                        </Button>
+                      )}
+                      {isAdmin && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="w-8 h-8 p-0 hover:bg-destructive/10 hover:text-destructive transition-colors"
+                          onClick={() =>
+                            setDeleteTarget({
+                              id: entry.id!,
+                              name: entry.name,
+                            })
+                          }
+                          aria-label={`Delete entry for ${entry.name}`}
+                          data-ocid={`visitors.delete.button.${i + 1}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
       )}
 
-      {/* Dialogs */}
       <CheckInDialog open={showCheckIn} onClose={() => setShowCheckIn(false)} />
       <DeleteConfirmDialog
-        entryId={deleteTarget?.id ?? null}
+        visitorId={deleteTarget?.id ?? null}
         visitorName={deleteTarget?.name ?? ""}
         onClose={() => setDeleteTarget(null)}
       />
